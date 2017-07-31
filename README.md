@@ -2,7 +2,8 @@
 A simple reposync clone which runs a bit faster than the normal python one.
 
 # Usage
-```./reposync2
+```
+./reposync2
 Simple rpm repo sync, compares remote and local repodata
 Do not forget to run createrepo on the local copy afterward.
 Usage: ..
