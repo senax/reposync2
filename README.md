@@ -1,7 +1,22 @@
 # reposync2
 A simple reposync clone which runs a bit faster than the normal python one.
 
-# Example of speed
+# Usage
+```./reposync2
+Simple rpm repo sync, compares remote and local repodata
+Do not forget to run createrepo on the local copy afterward.
+Usage: ..
+Flags:
+ -n, --noop     do not actually download or delete any files.
+ -k, --keep     keep files in destination which are not present in source.
+ -l <n>, --last <n>     Only download last n versions of the same rpm. Defaults to 0 for all.
+ -s <url>, --source <url>       Source URL, for example \
+                http://mirrorservice.org/sites/dl.fedoraproject.org/pub/epel/7/x86_64
+ -d <directory>, --destination <directory>       Destination directory, for example .
+
+```
+
+# Example of performance
 epel7 is already updated, repodata locally is a little bit behind but still decent performance.
 
 ```$ time make epel

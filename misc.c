@@ -343,12 +343,13 @@ int xferinfo(void *p, curl_off_t dltotal, curl_off_t dlnow, curl_off_t ultotal, 
 void usage(void)
 {
         printf("Simple rpm repo sync, compares remote and local repodata\n");
+        printf("Do not forget to run createrepo on the local copy afterward.\n");
         printf("Usage: .. \n");
         printf("Flags:\n");
         printf(" -n, --noop\tdo not actually download or delete any files.\n");
         printf(" -k, --keep\tkeep files in destination which are not present in source.\n");
-        printf(" -l <n>, --last <n>\tOnly download last n versions of the same rpm.\n");
-        printf(" -s <url>, --source <url>\tSource URL, for example http://mirrorservice.org/sites/dl.fedoraproject.org/pub/epel/7/x86_64\n");
+        printf(" -l <n>, --last <n>\tOnly download last n versions of the same rpm. Defaults to 0 for all.\n");
+        printf(" -s <url>, --source <url>\tSource URL, for example \\\n\t\thttp://mirrorservice.org/sites/dl.fedoraproject.org/pub/epel/7/x86_64\n");
         printf(" -d <directory>, --destination <directory>\t Destination directory, for example .\n");
 
 }
