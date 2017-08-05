@@ -34,26 +34,33 @@ size_t write_file(FILE *fp, size_t size, size_t nmemb, FILE *stream)
         return fwrite(fp, size, nmemb, stream);
 }
 
-int get_http_to_file(FILE *fp,char *url, bool verbose)
+int get_http_to_file(FILE *fp, char *url, bool verbose)
 {
+        debug(1,"get_http_to_file");
         printf("get_http_to_file: %s\n",url);
         curl_global_init(CURL_GLOBAL_ALL);
         CURL *curl_handle;
         CURLcode res;
-        struct myprogress prog;
 
         curl_handle=curl_easy_init();
-        prog.lastruntime = 0;
-        prog.curl = curl_handle;
         curl_easy_setopt(curl_handle, CURLOPT_URL, url);
         curl_easy_setopt(curl_handle, CURLOPT_WRITEFUNCTION, write_file);
         curl_easy_setopt(curl_handle, CURLOPT_WRITEDATA, fp);
         curl_easy_setopt(curl_handle, CURLOPT_FOLLOWLOCATION, 1L);
+        curl_easy_setopt(curl_handle, CURLOPT_FAILONERROR, 1L);
+#if LIBCURL_VERSION_NUM >= 0x072000
+        struct myprogress prog;
+        prog.lastruntime = 0;
+        prog.curl = curl_handle;
         if (verbose) {
                 curl_easy_setopt(curl_handle, CURLOPT_XFERINFOFUNCTION, xferinfo);
                 curl_easy_setopt(curl_handle, CURLOPT_XFERINFODATA, &prog);
                 curl_easy_setopt(curl_handle, CURLOPT_NOPROGRESS, 0L);
         }
+#endif
+        if (certfile)  curl_easy_setopt(curl_handle, CURLOPT_SSLCERT, certfile);
+        if (keyfile)  curl_easy_setopt(curl_handle, CURLOPT_SSLKEY, keyfile);
+        if (cafile)  curl_easy_setopt(curl_handle, CURLOPT_CAINFO, cafile);
 
         res=curl_easy_perform(curl_handle);
         if (res != CURLE_OK){
@@ -63,26 +70,38 @@ int get_http_to_file(FILE *fp,char *url, bool verbose)
 
         curl_easy_cleanup(curl_handle);
         curl_global_cleanup();
+        debug(-1,"get_http_to_file done.");
         return 0;
 }
 
 int uncompress_file(char *filename, Byte **content)
 {
+        //  printf("in uncompress_file(%s)\n", filename);
+        debug(1,"uncompress file");
+//        fprintf(stderr,"DEBUG: %s\n", filename);
         gzFile gzfp;
+//        debug(0,"gzopen");
         gzfp=gzopen(filename,"rb");
+        if (gzfp == NULL) return 1;
         Byte *uncompr;
-        uLong uncomprLen=16;
+        uLong uncomprLen=1600;
         uLong len=uncomprLen;
-        uncompr = (Byte*)calloc((uInt)uncomprLen, 1);
+//        debug(0,"calloc");
+        uncompr = (Byte*)calloc(uncomprLen * sizeof(char), 1);
+//        debug(0,"before while");
         while (len == uncomprLen ) {
+//                debug(0,"increasing buffer");
                 gzrewind(gzfp);
                 uncomprLen *=2;
                 free(uncompr);
-                uncompr = (Byte*)calloc((uInt)uncomprLen, 1);
+                uncompr = (Byte*)calloc(uncomprLen * sizeof(char), 1);
                 len=gzread(gzfp,uncompr,uncomprLen);
+//                fprintf(stderr,"DEBUG: len=%lu, buf=%lu\n",len, uncomprLen);
         }
+//        debug(0,"gzclose");
         gzclose(gzfp);
         *content = uncompr;
+        debug(-1,"uncompress file done");
         return 0;
 }
 
@@ -103,6 +122,7 @@ xmlXPathObjectPtr getnodeset(xmlDocPtr doc, xmlChar *namespace, xmlChar *xpath)
 {
         xmlXPathContextPtr context;
         xmlXPathObjectPtr result;
+        debug(0,"in getnodeset");
 
         context = xmlXPathNewContext(doc);
         if (context == NULL) {
@@ -116,7 +136,9 @@ xmlXPathObjectPtr getnodeset(xmlDocPtr doc, xmlChar *namespace, xmlChar *xpath)
                 return NULL;
         }
 
+        debug(0,"xmlXPathEvalExpression start");
         result = xmlXPathEvalExpression(xpath, context);
+        debug(0,"xmlXPathEvalExpression done");
         xmlXPathFreeContext(context);
         if (result == NULL) {
                 printf("Error in xmlXPathEvalExpression\n");
@@ -124,13 +146,47 @@ xmlXPathObjectPtr getnodeset(xmlDocPtr doc, xmlChar *namespace, xmlChar *xpath)
         }
         if(xmlXPathNodeSetIsEmpty(result->nodesetval)){
                 xmlXPathFreeObject(result);
-                printf("No result\n");
+                printf("No result for %s\n", xpath);
                 return NULL;
         }
         return result;
 }
+int get_href_from_xml(char *repomd_xml, char *data_type, char **postfix)
+{
+        xmlDocPtr doc;
+        int retval = 0;
+        doc = xmlReadMemory(repomd_xml,strlen(repomd_xml),"noname.xml",NULL,0);
+        if (doc == NULL) {
+                perror("get_primary_url: Failed to parse.\n");
+                puts(repomd_xml);
+                return 1;
+        }
 
-int get_primary_url(char *repomd_xml, char **postfix)
+        xmlNodeSetPtr nodeset;
+        // xmlChar *xpath = (xmlChar*) "//prefix:data[@type='primary']/prefix:location"; 
+        char *xpath;
+        asprintf(&xpath, "//prefix:data[@type='%s']/prefix:location", data_type); 
+        xmlXPathObjectPtr result;
+
+        result = getnodeset(doc, href, (xmlChar *)xpath);
+
+        if (result && result->nodesetval->nodeNr == 1 ) {
+                nodeset = result->nodesetval;
+                xmlChar *href = xmlGetProp(nodeset->nodeTab[0],(xmlChar *)"href");
+                *postfix = strdup((char *)href);
+                printf("POSTFIX=%s\n",href);
+        } else {
+                fprintf(stderr,"No results for %s\n", data_type);
+                retval = 1;
+        }
+        xmlXPathFreeObject(result);
+        xmlFreeDoc(doc);
+        free(xpath);
+
+        return retval;
+}
+
+int get_primary_url_OLD(char *repomd_xml, char **postfix)
 {
         // printf("get_primary_url:\n");
         xmlDocPtr doc;
@@ -157,6 +213,7 @@ int get_primary_url(char *repomd_xml, char **postfix)
                 xmlXPathFreeObject(result);
         } else {
                 fprintf(stderr,"No results???\n");
+                xmlXPathFreeObject(result);
                 return 1;
         }
         xmlFreeDoc(doc);
@@ -169,38 +226,65 @@ int get_xml(char *url, char **xml)
 {
         // get and optionally uncompress xml
         // printf("in get_xml: %s\n",url);
+        debug(0,"get_xml");
         Byte *content;
+        int retval=0;
         if ( url[0] == '/') {
-                uncompress_file(url,&content);
+                // FILE *fp = fopen(url,"r");
+//                debug(0,"uncompress file start");
+                fprintf(stderr,"DEBUG uncompress file %s\n", url);
+                retval = uncompress_file(url, &content);
+//                debug(0,"uncompressed file");
+                // fclose(fp);
         } else {
-                FILE *fp = fopen("tmp_primary.gz","w+b");
-                get_http_to_file(fp,url,0);
+                char *tempfile = tmpnam(NULL);
+                FILE *fp = fopen(tempfile,"w+b");
+//                debug(0,"get http_to_file");
+                get_http_to_file(fp, url, 0);
                 fclose(fp);
-                uncompress_file("tmp_primary.gz",&content);
+//                debug(0,"uncompress");
+                retval = uncompress_file(tempfile, &content);
+//                debug(0,"gzfp");
+                unlink(tempfile);
                 // printf("CONTENT=%s\n",content);
         }
         *xml = (char *)content;
-        return 0;
+        return retval;
 }
 
 int get_primary_xml(char *repo, char **primary_xml)
 {
         // printf("in get_primary_xml: %s\n",repo);
-        char *repomd_url = malloc(strlen(repo) + strlen("/repodata/repomd.xml") + 1);
-        sprintf(repomd_url,"%s/repodata/repomd.xml",repo);
+        char *repomd_url;
         char *xml;
-        get_xml(repomd_url, &xml);
+        int retval = 0;
+        asprintf(&repomd_url, "%s/repodata/repomd.xml", repo);
+        retval = get_xml(repomd_url, &xml);
+        free(repomd_url);
+        if (retval != 0) return 1;
 
         char *postfix;
-        get_primary_url(xml, &postfix);
-        free(xml);
-        // printf("postfix=%s\n",postfix);
-        char *primary_url = malloc(strlen(repo) + strlen(postfix) + 1 + 1 );
-        sprintf(primary_url,"%s/%s",repo,postfix);
-        get_xml(primary_url, &xml);
+        char *primary_url;
+        char *group;
+        if ( get_href_from_xml(xml, "group", &group) == 0) {
+                fprintf(stderr,"COMPS/GROUP: %s\n",group);
+                free(group);
+        }
+        char *updateinfo;
+        if ( get_href_from_xml(xml, "updateinfo", &updateinfo) == 0) {
+                fprintf(stderr,"UPDATEINFO: %s\n",updateinfo);
+                free(updateinfo);
+        }
+        get_href_from_xml(xml, "primary", &postfix);
+        // get_primary_url(xml, &postfix);
+        asprintf(&primary_url,"%s/%s",repo,postfix);
+
+        retval = get_xml(primary_url, &xml);
+        free(postfix);
+        free(primary_url);
 
         *primary_xml = xml;
-        return 0;
+        return retval;
 }
 
 void print_rpms(struct rpm *rpms, int size)
@@ -219,7 +303,7 @@ void print_rpms(struct rpm *rpms, int size)
 }
 
 
-int ensure_dir(char *basedir, char *location, bool noop)
+int ensure_dir(char *basedir, char *location)
 {
         // char location[]="z/zvbi-0.2.35-1.el7.x86_64.rpm";
         // ensure_dir("/home/frank/REPOSYNC/c/DEST",location);
@@ -231,6 +315,8 @@ int ensure_dir(char *basedir, char *location, bool noop)
                 perror("Destination basedir check");
                 exit(1);
         }
+        if (noop)
+                return 0;
         while (( str_pos = strchr(location + i , '/')) != NULL ) {
                 i = str_pos - location + 1;
                 dirname = strndup(location, i - 1); // no trailing /
@@ -258,6 +344,32 @@ free_path:
         return 0;
 }
 
+
+int calc_sha1(char *path, char *output)
+{
+        FILE *file = fopen(path,"rb");
+        if (!file) return -1;
+        unsigned char hash[SHA_DIGEST_LENGTH];
+        SHA_CTX sha1;
+        SHA1_Init(&sha1);
+        const int bufsize = 32 * 1024;
+        char *buffer = malloc(bufsize*sizeof(*buffer));
+        if (!buffer) return 01;
+        int bytesread=0;
+        while((bytesread = fread(buffer, 1,bufsize, file))) {
+                SHA1_Update(&sha1, buffer, bytesread);
+        }
+        SHA1_Final(hash, &sha1);
+
+        int i;
+        for (i=0;i<SHA_DIGEST_LENGTH; i++) {
+                sprintf(output + (i*2), "%02x", hash[i]);
+        }
+        output[SHA_DIGEST_LENGTH * 2] = '\0';
+
+        free(buffer);
+        return 0;
+}
 
 int calc_sha256(char *path, char *output)
 {
@@ -287,10 +399,20 @@ int calc_sha256(char *path, char *output)
 
 int compare_checksum(char *checksum_type,char *checksum,char *path)
 {
-        char sha[65];
-        calc_sha256(path,sha);
-        // printf("compare_checksum: %s\n%s\n%s\n",checksum_type,checksum,sha);
-        return strcmp(checksum,sha);
+        if (strcmp(checksum_type,"sha256") == 0) {
+                char sha[SHA256_DIGEST_LENGTH * 2 + 1];
+                calc_sha256(path,sha);
+//                printf("compare_checksum: %s\n%s\n%s\n",checksum_type,checksum,sha);
+                return strcmp(checksum,sha);
+        } else if (strcmp(checksum_type,"sha") == 0 || strcmp(checksum_type,"sha1") == 0) {
+                char sha[SHA_DIGEST_LENGTH * 2 + 1];
+                calc_sha1(path,sha);
+//                printf("compare_checksum: %s\n%s\n%s\n",checksum_type,checksum,sha);
+                return strcmp(checksum,sha);
+        } else {
+                printf("Unsupported checksum type %s, not comparing\n",checksum_type);
+                return 0;
+        }
 }
 
 int check_rpm_exists(char *targetdir, struct rpm rpm){
@@ -305,14 +427,22 @@ int check_rpm_exists(char *targetdir, struct rpm rpm){
         } else if (rpmstat.st_size != rpm.size) {
                 // check size
                 printf("DEST found but size wrong: file size: %ld rpm size: %ld\n",rpmstat.st_size,rpm.size);
-                printf("unlinking(%s)\n",path);
-                unlink(path);
+                if (noop) {
+                        printf("NOOP: would unlink(%s)\n",path);
+                } else {
+                        printf("unlinking(%s)\n",path);
+                        unlink(path);
+                }
                 goto free_path;
         } else if ( compare_checksum(rpm.checksum_type,rpm.checksum,path) != 0) {
                 // size is same but checksums differ
                 printf("DEST found with same size: file size: %ld rpm size: %ld\n",rpmstat.st_size,rpm.size);
-                printf("unlinking(%s)\n",path);
-                unlink(path);
+                if (noop) {
+                        printf("NOOP: would unlink(%s)\n",path);
+                } else {
+                        printf("unlinking(%s)\n",path);
+                        unlink(path);
+                }
                 goto free_path;
         }
         retval = 1;

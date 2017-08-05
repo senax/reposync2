@@ -11,6 +11,10 @@ vim: tabstop=2 shiftwidth=2 expandtab
 #include <zlib.h>
 #include <unistd.h>
 
+extern char *keyfile, *certfile, *cafile;
+extern bool noop;
+extern bool verifyssl;
+
 struct MemoryStruct {
   char *memory;
   size_t size;
@@ -38,10 +42,12 @@ int get_primary_xml(char *repo, char **primary_xml);
 
 void print_rpms(struct rpm *rpms, int size);
 
-int ensure_dir(char *basedir, char *location, bool noop);
+int ensure_dir(char *basedir, char *location);
 
 int check_rpm_exists(char *targetdir, struct rpm rpm);
 
 int xferinfo(void *p, curl_off_t dltotal, curl_off_t dlnow, curl_off_t utotal, curl_off_t ulnow);
 
 void usage(void);
+
+void debug(int indent, char *message);

@@ -22,81 +22,168 @@ valgrind ./get_libxml --leak-check=full
 #include <zlib.h>
 #include <unistd.h>
 #include <getopt.h>
+#include <sys/time.h>
 
 #include "misc.h"
 
+char *keyfile, *certfile, *cafile;
+bool noop=0;
+bool verifyssl=1;
+bool getcomps=0;
+struct timeval starttime, prevtime;
+
+#define ELEMSIZE 100
+
+struct ParserState {
+        int return_val;
+        int index;
+        struct rpm *rpms;
+        bool package;
+        bool name;
+        bool arch;
+        bool version;
+        bool checksum;
+        bool size;
+        bool location;
+        char element[ELEMSIZE];
+};
+
+static xmlSAXHandler my_handlers;
+
+void OnStartDocument(struct ParserState *ctx)
+{
+        ctx->index = 0;
+}
+
+void OnStartElement(struct ParserState *ctx, const xmlChar* fullname, const xmlChar** atts)
+{
+        if ( strcmp("package", (char *)fullname) == 0 && strcmp("type", (char *)atts[0]) == 0 && strcmp("rpm", (char *)atts[1]) == 0) {
+                ctx->package = 1;
+        }
+        if (!ctx->rpms) return;
+
+        // in package scope?
+        if (ctx->package) {
+                strcpy(ctx->element,  (char *)fullname);
+                if ( strcmp("version",(char *)fullname) == 0) {
+                        int i=0;
+                        while ( atts && atts[i] && atts[i+1] ){
+                                if (strcmp("ver", (char *)atts[i]) == 0) {
+                                        ctx->rpms[ctx->index].version = strdup((char *)atts[i+1]);
+                                }
+                                if (strcmp("rel", (char *)atts[i]) == 0)
+                                        ctx->rpms[ctx->index].release = strdup((char *)atts[i+1]);
+                                i+=2;
+                        }
+                }
+                if ( strcmp("checksum",(char *)fullname) == 0) {
+                        int i=0;
+                        while ( atts && atts[i] && atts[i+1] ){
+                                if (strcmp("type", (char *)atts[i]) == 0) {
+                                        ctx->rpms[ctx->index].checksum_type = strdup((char *)atts[i+1]);
+                                }
+                                i+=2;
+                        }
+                }
+                if ( strcmp("location",(char *)fullname) == 0) {
+                        int i=0;
+                        while ( atts && atts[i] && atts[i+1] ){
+                                if (strcmp("href", (char *)atts[i]) == 0) {
+                                        ctx->rpms[ctx->index].location = strdup((char *)atts[i+1]);
+                                }
+                                i+=2;
+                        }
+                }
+                if ( strcmp("size",(char *)fullname) == 0) {
+                        int i=0;
+                        while ( atts && atts[i] && atts[i+1] ){
+                                if (strcmp("package", (char *)atts[i]) == 0) {
+                                        ctx->rpms[ctx->index].size = atoi((char *)atts[i+1]);
+                                }
+                                i+=2;
+                        }
+                }
+        }
+}
+
+static void OnEndElement( struct ParserState *ctx, const xmlChar* name)
+{
+        if ( strcmp("package", (char *)name) == 0 ) {
+                ctx->package = 0;
+                ctx->index++;
+        }
+        ctx->element[0]='\0';
+}
+
+static void OnCharacters( struct ParserState *ctx, const xmlChar *ch, int len)
+{
+        char chars[len + 1];
+        strncpy(chars, (const char *)ch, len);
+        chars[len] = '\0';
+        if (!ctx->rpms)
+                return;
+        if (!ctx->package)
+                return;
+        if (strlen(ctx->element) == 0)
+                return;
+        if (strcmp("name", (char *)ctx->element) == 0) {
+                ctx->rpms[ctx->index].name = strdup(chars);
+        } else if (strcmp("arch", (char *)ctx->element) == 0) {
+                ctx->rpms[ctx->index].arch = strdup(chars);
+        } else if (strcmp("checksum", (char *)ctx->element) == 0) {
+                ctx->rpms[ctx->index].checksum = strdup(chars);
+        }
+}
+
 
 struct rpm *rpms_from_xml(char *xml, int *num_results)
+        /* 
+         * parse xml-string from memory and return array of struct rpm. Also set num_results.
+         */
 {
-        // printf("in rpms_from_xml:\n");
-        struct rpm *rpms;
-        xmlChar *primary_ns = (xmlChar *)"http://linux.duke.edu/metadata/common";
-        xmlDocPtr doc;
-        doc = xmlReadMemory(xml, strlen(xml), "noname.xml", NULL, 0);
-        if (doc == NULL) {
-                fprintf(stderr, "Failed to parse.\n");
-                return NULL;
-        }
+        debug(1,"in rpms_from_xml:");
+//        struct rpm *rpms = NULL;
+        struct ParserState my_state;
+        int retval = 0;
+        my_state.rpms = NULL;
+        *num_results = 0;
+//        xmlChar *primary_ns = (xmlChar *)"http://linux.duke.edu/metadata/common";
+        my_handlers.startDocument = (void *)OnStartDocument;
+        my_handlers.startElement = (void *)OnStartElement;
+        my_handlers.endElement = (void *)OnEndElement;
+        my_handlers.characters = (void *)OnCharacters;
+        retval = xmlSAXUserParseMemory(&my_handlers,&my_state,xml,strlen(xml));
+        if (retval != 0) exit(1);
+//        fprintf(stderr,"xmlSAXUserParseMemory returned %d\n",retval); 
+//        fprintf(stderr,"my_state.index %d\n",my_state.index); 
+        my_state.rpms = calloc( my_state.index + 1, sizeof(struct rpm));
+        retval = xmlSAXUserParseMemory(&my_handlers,&my_state,xml,strlen(xml));
 
-        xmlNodeSetPtr nodeset;
-        xmlChar *xpath = (xmlChar*) "//prefix:package[@type='rpm']/prefix:name";
-        xmlXPathObjectPtr result;
-        result = getnodeset(doc, primary_ns, xpath);
-        if (result) {
-                int i;
-                nodeset = result->nodesetval;
-                *num_results = nodeset->nodeNr  ;
-                // printf("num_results=%d\n",*num_results);
-                rpms = calloc(*num_results*sizeof(*rpms), 1);
-                for (i=0; i < *num_results  ; i++) {
-                        // printf("looking for rpm details for result. i=%d\n",i);
-                        xmlNode *cur = nodeset->nodeTab[i];
-                        while ( cur != NULL ) {
-                                if ( cur->type == XML_ELEMENT_NODE ) { // xmlNodeGetContent automatically walks the text child nodes.
-                                        if (!xmlStrcmp(cur->name, (const xmlChar *)"name")) {
-                                                rpms[i].name = (char *)xmlNodeGetContent(cur);
-                                        }
-                                        if (!xmlStrcmp(cur->name, (const xmlChar *)"arch")) { 
-                                                rpms[i].arch = (char *)xmlNodeGetContent(cur);
-                                        }
-                                        if (!xmlStrcmp(cur->name, (const xmlChar *)"location")) { 
-                                                rpms[i].location = (char *)xmlGetProp(cur, (const xmlChar *)"href");
-                                        }
-                                        if (!xmlStrcmp(cur->name, (const xmlChar *)"checksum")) { 
-                                                rpms[i].checksum_type = (char *)xmlGetProp(cur, (const xmlChar *)"type");
-                                                rpms[i].checksum = (char *)xmlNodeGetContent(cur);
-                                        }
-                                        if (!xmlStrcmp(cur->name, (const xmlChar *)"size")) { 
-                                                rpms[i].size = strtol((const char * restrict) xmlGetProp(cur, (const xmlChar *)"package"), NULL, 10);
-                                        }
-                                        if (!xmlStrcmp(cur->name, (const xmlChar *)"version")) { // get ver rel
-                                                rpms[i].version = (char *)xmlGetProp(cur, (const xmlChar *)"ver");
-                                                rpms[i].release = (char *)xmlGetProp(cur, (const xmlChar *)"rel");
-                                        }
-                                }
-                                cur = cur->next;
-                        }
-                        // printf("done search while cur loop\n");
-                        // print_rpms(&rpms[i], 1);
-                }
-
-                xmlXPathFreeObject(result);
-        } else {
-                fprintf(stderr, "No results???\n");
-                return NULL;
-        }
-        xmlFreeDoc(doc);
-        return rpms;
+        debug(-1,"rpms_from_xml done\n");
+        *num_results=my_state.index;
+        return my_state.rpms;
 }
 
 int get_rpms(char *repo, struct rpm **retval, int *result_size)
 {
-        // printf("in get_rpms: %s\n",repo);
+        int ret = 0;
+//        printf("in get_rpms: %s\n",repo);
+        debug(1,"in get_rpms: ");
+        if (repo[strlen(repo) - 1] == '/')
+                repo[strlen(repo) - 1] = '\0';
         char *xml;
-        get_primary_xml(repo, &xml);
+        ret = get_primary_xml(repo, &xml);
+        if (ret != 0) return 1;
         struct rpm *rpms = rpms_from_xml(xml, result_size);
+        debug(0,"free(xml)");
+        free(xml);
         *retval = rpms;
-        return 0;
+        debug(-1,"get_rpms done");
+        if (rpms) {
+                return 0;
+        } else {
+                return 1;
+        }
 }
 
 int rpm_compare(struct rpm *p1, struct rpm *p2)
@@ -189,7 +276,7 @@ void cleanup_source(struct rpm *rpms, int size,int last_n)
                         // }
                         // if same > last_n; then clear action flag.
                         if (same > last_n) {
-                                printf("last_n=%d, ignoring %s-%s-%s-%s\n", last_n, rpms[i].name, rpms[i].version, rpms[i].release, rpms[i].arch);
+                                // printf("last_n=%d, ignoring %s-%s-%s-%s\n", last_n, rpms[i].name, rpms[i].version, rpms[i].release, rpms[i].arch);
                                 rpms[i].action = 0;
                         }
                         i--;
@@ -216,16 +303,23 @@ void compare_repos(struct rpm *src_rpms, int src_size,struct rpm *dst_rpms, int 
          */
         // printf("src_size=%d\n",src_size);
         // printf("dst_size=%d\n",dst_size);
+        debug(1,"compare_repos");
+        debug(0,"sort(src)");
         sort_rpms(src_rpms, src_size);
+        debug(0,"sort(dst)");
         sort_rpms(dst_rpms, dst_size);
+        debug(0,"simple_in_a_not_b");
         simple_in_a_not_b(src_rpms, src_size, dst_rpms, dst_size); // copy these
+        debug(0,"cleanup_source");
         cleanup_source(src_rpms, src_size, last_n); // last_n, should others be removed from dst? If so, do this after the below bit.
         if (keep == 0) {
                 simple_in_a_not_b(dst_rpms, dst_size, src_rpms, src_size); // delete these
+                debug(0,"keep=0, simple_in_a_not_b(dst,src)");
         }
+        debug(-1,"compare_repos done");
 }
 
-void download_rpms(char *baseurl, struct rpm *rpms, int size, char *targetdir, bool noop)
+void download_rpms(char *baseurl, struct rpm *rpms, int size, char *targetdir)
 {
         int i;
         for (i = 0; i<size;i++) {
@@ -234,11 +328,11 @@ void download_rpms(char *baseurl, struct rpm *rpms, int size, char *targetdir, b
                         char *fullsrc;
                         // print_rpms(&rpms[i], 1);
                         // printf("download %s/%s, %ld to %s\n",baseurl,rpms[i].location, rpms[i].size,targetdir);
-                        ensure_dir(targetdir, rpms[i].location, noop);
+                        ensure_dir(targetdir, rpms[i].location);
                         asprintf(&fullpath, "%s/%s", targetdir, rpms[i].location);
                         asprintf(&fullsrc, "%s/%s", baseurl, rpms[i].location);
                         if ( check_rpm_exists(targetdir, rpms[i]) != 0 ) {
-                                printf("Skipping down of %s already there but not in repodata.\n",rpms[i].location);
+                                printf("Skipping download of %s already there but not in repodata.\n",rpms[i].location);
                                 continue;
                         }
                         if (noop) {
@@ -254,34 +348,81 @@ void download_rpms(char *baseurl, struct rpm *rpms, int size, char *targetdir, b
         }
 }
 
-void delete_rpms(char *targetdir, struct rpm *rpms, int size, bool noop)
+void delete_rpms(char *targetdir, struct rpm *rpms, int size)
 {
         int i;
         for (i = 0; i < size; i++) {
                 if ( rpms[i].action ) {
                         char *path;
                         // print_rpms(&rpms[i], 1);
-                        printf("delete %s/%s\n", targetdir, rpms[i].location);
                         asprintf(&path,"%s/%s", targetdir, rpms[i].location);
-                        unlink(path);
+                        if (noop) {
+                                printf("NOOP: delete %s/%s\n", targetdir, rpms[i].location);
+                        } else {
+                                printf("delete %s/%s\n", targetdir, rpms[i].location);
+                                unlink(path);
+                        }
                         free(path);
                 }
         }
 }
 
-int sync_repo(char *src, char *dst, bool keep, int last_n, bool noop)
+int sync_repo(char *src, char *dst, bool keep, int last_n)
 {
         // printf("in sync_repo: %s -> %s\n",src,dst);
         struct rpm *rpm_src_ptr, *rpm_dst_ptr;
         int rpm_src_size = 0, rpm_dst_size = 0;
-        get_rpms(src, &rpm_src_ptr, &rpm_src_size);
-        get_rpms(dst, &rpm_dst_ptr, &rpm_dst_size);
+        debug(1,"sync_repo");
+        debug(0,"get_rpms(dst)");
+        if (get_rpms(dst, &rpm_dst_ptr, &rpm_dst_size) != 0)
+                perror("Destination repodata/ not found. Run createrepo?\n");
+        debug(0,"print_rpms(dst)");
+//        print_rpms(rpm_dst_ptr, rpm_dst_size);
+//        exit(0);
+        debug(0,"get_rpms(src)");
+        if (get_rpms(src, &rpm_src_ptr, &rpm_src_size) != 0) {
+                perror("source repodata not found\n");
+                exit(1);
+        }
+        if (rpm_src_size == 0) {
+                perror("source does not contain any rpms?\n");
+                exit(1);
+        }
+        debug(0,"compare_repos");
         compare_repos(rpm_src_ptr, rpm_src_size, rpm_dst_ptr, rpm_dst_size, keep, last_n);
-        download_rpms(src, rpm_src_ptr, rpm_src_size, dst, noop);
-        delete_rpms(dst, rpm_dst_ptr, rpm_dst_size, noop);
+        debug(0,"download_rpms");
+        download_rpms(src, rpm_src_ptr, rpm_src_size, dst);
+        debug(0,"delete_rpms");
+        delete_rpms(dst, rpm_dst_ptr, rpm_dst_size);
+        debug(0,"sync_repo done.");
         // print_rpms(rpm_src_ptr, rpm_src_size);
         // print_rpms(rpm_dst_ptr, rpm_dst_size);
+        printf("\n");
+        printf("src: %d rpms in %s\n",rpm_src_size, src);
+        printf("dst: %d rpms in %s\n",rpm_dst_size, dst);
+        debug(-1,"sync_repo done");
         return 0;
+}
+
+void debug(int indent, char *message)
+{
+        return;
+        struct timeval temptime;
+        static int indentation;
+        indentation += indent;
+        gettimeofday(&temptime, 0);
+        // diff starttime - temptime = total time
+        // diff now - temptime = diff
+        int i;
+        fprintf(stderr,"DEBUG:");
+        for (i=0; i < indentation; i++)
+                fprintf(stderr,"-");
+        fprintf(stderr,"%.1f/%.0fms %s\n",
+                        ( temptime.tv_sec - prevtime.tv_sec) * 1000.0f + (temptime.tv_usec - prevtime.tv_usec ) / 1000.0f,
+                        ( temptime.tv_sec - starttime.tv_sec) * 1000.0f + (temptime.tv_usec - starttime.tv_usec ) / 1000.0f,
+                        message
+               );
+        gettimeofday(&prevtime, 0);
 }
 
 int main(int argc, char **argv)
@@ -292,7 +433,7 @@ int main(int argc, char **argv)
         // char dst_repo[]="file:///home/frank/c/epel7_old";
         char *dst_repo;
         //char dst_repo[]="file:///home/frank/c/DEST";
-        bool noop=0,keep=0; int last_n=0;
+        bool keep=0; int last_n=0;
         int opt;
         opterr = 0;
         static struct option long_options[]= {
@@ -300,12 +441,18 @@ int main(int argc, char **argv)
                 {"destination", required_argument,0,'d'},
                 {"keep", no_argument, 0, 'k'},
                 {"noop", no_argument, 0, 'n'},
+                {"comps", required_argument,0,'c'},
                 {"last", required_argument,0,'l'},
+                {"key", required_argument,0,'K'},
+                {"cert", required_argument,0,'C'},
+                {"ca", required_argument,0,'A'},
                 {0,0,0,0},
         };
         int option_index=0;
+        gettimeofday(&starttime, 0);
+        gettimeofday(&prevtime, 0);
 
-        while ((opt = getopt_long(argc, argv, "s:d:knl:", long_options, &option_index)) != -1) {
+        while ((opt = getopt_long(argc, argv, "s:d:knl:K:C:A:c", long_options, &option_index)) != -1) {
                 //    printf("opt=%c\n",opt);
                 switch(opt) {
                         //      case 0:
@@ -342,6 +489,33 @@ int main(int argc, char **argv)
                         case 'n':
                                 noop = 1;
                                 break;
+                        case 'c':
+                                getcomps = 1;
+                                break;
+                        case 'K':
+                                if (optarg) {
+                                        keyfile = optarg;
+                                } else {
+                                        printf("keyfile needs an option\n");
+                                        return 1;
+                                }
+                                break;
+                        case 'C':
+                                if (optarg) {
+                                        certfile = optarg;
+                                } else {
+                                        printf("certfile needs an option\n");
+                                        return 1;
+                                }
+                                break;
+                        case 'A':
+                                if (optarg) {
+                                        cafile = optarg;
+                                } else {
+                                        printf("cafile needs an option\n");
+                                        return 1;
+                                }
+                                break;
                         case '?':
                                 break;
                         default:
@@ -352,12 +526,15 @@ int main(int argc, char **argv)
                 usage();
                 return 1;
         }
-        printf("src=%s\n", src_repo);
+        debug(0,"main start");
+        LIBXML_TEST_VERSION
+                printf("src=%s\n", src_repo);
         printf("dst='%s'\n", dst_repo);
-        printf("keep=%d\n", keep);
-        printf("last_n=%d\n", last_n);
-        printf("noop=%d\n", noop);
-        sync_repo(src_repo, dst_repo, keep, last_n, noop);
+        //        printf("keep=%d\n", keep);
+        //        printf("last_n=%d\n", last_n);
+        //        printf("noop=%d\n", noop);
+        sync_repo(src_repo, dst_repo, keep, last_n);
+        debug(0,"main done");
         printf("Done.\n");
         xmlCleanupParser();
         return 0;
