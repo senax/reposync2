@@ -42,4 +42,6 @@ Python-reposync takes around two minutes for the same action.
 - download comps.xml
 - client certificate handling
 - general cleanup
- 
+- sha1 / sha support
+- remove trailing / from source/dest
+
