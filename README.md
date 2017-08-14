@@ -39,9 +39,6 @@ sys     0m0.183s
 Python-reposync takes around two minutes for the same action.
 
 # Todo
-- download comps.xml
-- client certificate handling
+- download comps.xml / updateinfo.xml
 - general cleanup
-- sha1 / sha support
-- remove trailing / from source/dest
 
