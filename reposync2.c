@@ -21,7 +21,6 @@ valgrind ./get_libxml --leak-check=full
 #include <libxml/xpathInternals.h>
 #include <zlib.h>
 #include <unistd.h>
-#include <getopt.h>
 #include <sys/time.h>
 
 #include "misc.h"
@@ -30,6 +29,10 @@ char *keyfile, *certfile, *cafile;
 bool noop=0;
 bool verifyssl=1;
 bool getcomps=0;
+bool getothermd=0;
+bool keep=1;
+int last_n=0;
+struct stats stats;
 struct timeval starttime, prevtime;
 
 #define ELEMSIZE 100
@@ -287,7 +290,7 @@ void cleanup_source(struct rpm *rpms, int size,int last_n)
 
 }
 
-void compare_repos(struct rpm *src_rpms, int src_size,struct rpm *dst_rpms, int dst_size, bool keep, int last_n)
+void compare_repos(struct rpm *src_rpms, int src_size,struct rpm *dst_rpms, int dst_size)
 {
         /*
          * create hashes as comparings 10k element arrays is not useful. hash on name-arch; there might/will be multiple results.
@@ -333,8 +336,10 @@ void download_rpms(char *baseurl, struct rpm *rpms, int size, char *targetdir)
                         asprintf(&fullsrc, "%s/%s", baseurl, rpms[i].location);
                         if ( check_rpm_exists(targetdir, rpms[i]) != 0 ) {
                                 printf("Skipping download of %s already there but not in repodata.\n",rpms[i].location);
+                                stats.download_skipped++;
                                 continue;
                         }
+                        stats.downloaded++;
                         if (noop) {
                                 printf("NOOP: curl %s -> %s\n", fullsrc, fullpath);
                         } else {
@@ -355,6 +360,7 @@ void delete_rpms(char *targetdir, struct rpm *rpms, int size)
                 if ( rpms[i].action ) {
                         char *path;
                         // print_rpms(&rpms[i], 1);
+                        stats.deleted++;
                         asprintf(&path,"%s/%s", targetdir, rpms[i].location);
                         if (noop) {
                                 printf("NOOP: delete %s/%s\n", targetdir, rpms[i].location);
@@ -367,7 +373,7 @@ void delete_rpms(char *targetdir, struct rpm *rpms, int size)
         }
 }
 
-int sync_repo(char *src, char *dst, bool keep, int last_n)
+int sync_repo(char *src, char *dst)
 {
         // printf("in sync_repo: %s -> %s\n",src,dst);
         struct rpm *rpm_src_ptr, *rpm_dst_ptr;
@@ -377,6 +383,8 @@ int sync_repo(char *src, char *dst, bool keep, int last_n)
         if (get_rpms(dst, &rpm_dst_ptr, &rpm_dst_size) != 0)
                 perror("Destination repodata/ not found. Run createrepo?\n");
         debug(0,"print_rpms(dst)");
+        stats.dst_size = rpm_dst_size;
+        stats.downloaded = 0;
 //        print_rpms(rpm_dst_ptr, rpm_dst_size);
 //        exit(0);
         debug(0,"get_rpms(src)");
@@ -384,12 +392,13 @@ int sync_repo(char *src, char *dst, bool keep, int last_n)
                 perror("source repodata not found\n");
                 exit(1);
         }
+        stats.src_size = rpm_src_size;
         if (rpm_src_size == 0) {
                 perror("source does not contain any rpms?\n");
                 exit(1);
         }
         debug(0,"compare_repos");
-        compare_repos(rpm_src_ptr, rpm_src_size, rpm_dst_ptr, rpm_dst_size, keep, last_n);
+        compare_repos(rpm_src_ptr, rpm_src_size, rpm_dst_ptr, rpm_dst_size);
         debug(0,"download_rpms");
         download_rpms(src, rpm_src_ptr, rpm_src_size, dst);
         debug(0,"delete_rpms");
@@ -425,118 +434,40 @@ void debug(int indent, char *message)
         gettimeofday(&prevtime, 0);
 }
 
+
 int main(int argc, char **argv)
 {
-        // char src_url[] = "http://rhel-packages/latest/apache-maven";
-        /// char src_repo[]="file:///home/frank/c/SOURCE";
-        char *src_repo;
-        // char dst_repo[]="file:///home/frank/c/epel7_old";
-        char *dst_repo;
-        //char dst_repo[]="file:///home/frank/c/DEST";
-        bool keep=0; int last_n=0;
-        int opt;
-        opterr = 0;
-        static struct option long_options[]= {
-                {"source", required_argument,0,'s'},
-                {"destination", required_argument,0,'d'},
-                {"keep", no_argument, 0, 'k'},
-                {"noop", no_argument, 0, 'n'},
-                {"comps", required_argument,0,'c'},
-                {"last", required_argument,0,'l'},
-                {"key", required_argument,0,'K'},
-                {"cert", required_argument,0,'C'},
-                {"ca", required_argument,0,'A'},
-                {0,0,0,0},
-        };
-        int option_index=0;
+        char *src_repo_ptr;
+        char *dst_repo_ptr;
         gettimeofday(&starttime, 0);
         gettimeofday(&prevtime, 0);
 
-        while ((opt = getopt_long(argc, argv, "s:d:knl:K:C:A:c", long_options, &option_index)) != -1) {
-                //    printf("opt=%c\n",opt);
-                switch(opt) {
-                        //      case 0:
-                        //        printf("option %s", long_options[option_index].name);
-                        //        if (optarg)
-                        //          printf(" with arg %s", optarg);
-                        //        printf("\n");
-                        //        break;
-                        case 's':
-                                if (optarg) {
-                                        src_repo = optarg;
-                                } else {
-                                        printf("source needs an option\n");
-                                        return 1;
-                                }
-                                break;
-                        case 'd':
-                                if (optarg) {
-                                        dst_repo = optarg;
-                                } else {
-                                        printf("destination needs an option\n");
-                                        return 1;
-                                }
-                                break;
-                        case 'l':
-                                //        if (optarg) {
-                                //          printf(" l optarg= %s\n",optarg);
-                                //        }
-                                last_n=atoi(optarg);
-                                break;
-                        case 'k':
-                                keep = 1;
-                                break;
-                        case 'n':
-                                noop = 1;
-                                break;
-                        case 'c':
-                                getcomps = 1;
-                                break;
-                        case 'K':
-                                if (optarg) {
-                                        keyfile = optarg;
-                                } else {
-                                        printf("keyfile needs an option\n");
-                                        return 1;
-                                }
-                                break;
-                        case 'C':
-                                if (optarg) {
-                                        certfile = optarg;
-                                } else {
-                                        printf("certfile needs an option\n");
-                                        return 1;
-                                }
-                                break;
-                        case 'A':
-                                if (optarg) {
-                                        cafile = optarg;
-                                } else {
-                                        printf("cafile needs an option\n");
-                                        return 1;
-                                }
-                                break;
-                        case '?':
-                                break;
-                        default:
-                                abort();
-                }
-        }
-        if (src_repo == NULL || dst_repo == NULL || strlen(src_repo) == 1 || strlen(dst_repo) == 1) {
+        get_options(argc, argv, &src_repo_ptr, &dst_repo_ptr);
+
+        if (src_repo_ptr == NULL || dst_repo_ptr == NULL || strlen(src_repo_ptr) == 1 || strlen(dst_repo_ptr) == 1) {
                 usage();
                 return 1;
         }
         debug(0,"main start");
         LIBXML_TEST_VERSION
-                printf("src=%s\n", src_repo);
-        printf("dst='%s'\n", dst_repo);
+        printf("src=%s\n", src_repo_ptr);
+        printf("dst='%s'\n", dst_repo_ptr);
         //        printf("keep=%d\n", keep);
         //        printf("last_n=%d\n", last_n);
         //        printf("noop=%d\n", noop);
-        sync_repo(src_repo, dst_repo, keep, last_n);
+        //        printf("comps=%d\n", getcomps);
+        //        printf("othermd=%d\n", getothermd);
+        sync_repo(src_repo_ptr, dst_repo_ptr);
         debug(0,"main done");
+        printf("stats.src_size=%d\n", stats.src_size);
+        printf("stats.dst_size=%d\n", stats.dst_size);
+        printf("stats.downloaded=%d\n", stats.downloaded);
+        printf("stats.download_skipped=%d\n", stats.download_skipped);
+        printf("stats.deleted=%d\n", stats.deleted);
+        printf("stats.down_bytes=%f\n", stats.down_bytes);
         printf("Done.\n");
         xmlCleanupParser();
         return 0;
+
 }
 

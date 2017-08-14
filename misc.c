@@ -18,11 +18,14 @@ vim: tabstop=8 shiftwidth=8 expandtab
 #include <sys/stat.h>
 #include <errno.h>
 #include <openssl/sha.h>
+#include <getopt.h>
 
 #include "misc.h"
 
 xmlChar *prefix= (xmlChar *)"prefix";
 xmlChar *href= (xmlChar *)"http://linux.duke.edu/metadata/repo";
+
+extern struct stats stats;
 
 struct myprogress {
         double lastruntime;
@@ -66,6 +69,12 @@ int get_http_to_file(FILE *fp, char *url, bool verbose)
         if (res != CURLE_OK){
                 fprintf(stderr,"curl_easy_perform() failed: %s\n",curl_easy_strerror(res));
                 exit(1);
+        }
+        stats.downloaded++;
+        double dl;
+        CURLcode res_info = curl_easy_getinfo(curl_handle, CURLINFO_SIZE_DOWNLOAD, &dl);
+        if(!res_info) {
+              stats.down_bytes+=dl;
         }
 
         curl_easy_cleanup(curl_handle);
@@ -477,9 +486,107 @@ void usage(void)
         printf("Usage: .. \n");
         printf("Flags:\n");
         printf(" -n, --noop\tdo not actually download or delete any files.\n");
+        printf(" -o, --other_metadata\t.\n");
+        printf(" -c, --comps\t.\n");
         printf(" -k, --keep\tkeep files in destination which are not present in source.\n");
         printf(" -l <n>, --last <n>\tOnly download last n versions of the same rpm. Defaults to 0 for all.\n");
         printf(" -s <url>, --source <url>\tSource URL, for example \\\n\t\thttp://mirrorservice.org/sites/dl.fedoraproject.org/pub/epel/7/x86_64\n");
         printf(" -d <directory>, --destination <directory>\t Destination directory, for example .\n");
 
+}
+
+
+int get_options(int argc, char **argv, char **src_repo_ptr, char **dst_repo_ptr)
+{
+        int opt;
+        opterr = 0;
+        static struct option long_options[]= {
+                {"source", required_argument,0,'s'},
+                {"destination", required_argument,0,'d'},
+                {"keep", no_argument, 0, 'k'},
+                {"noop", no_argument, 0, 'n'},
+                {"comps", no_argument,0,'c'},
+                {"other_metadata", no_argument,0,'o'},
+                {"last", required_argument,0,'l'},
+                {"key", required_argument,0,'K'},
+                {"cert", required_argument,0,'C'},
+                {"ca", required_argument,0,'A'},
+                {0,0,0,0},
+        };
+        int option_index=0;
+
+        while ((opt = getopt_long(argc, argv, "s:d:knl:K:C:A:c", long_options, &option_index)) != -1) {
+                //    printf("opt=%c\n",opt);
+                switch(opt) {
+                        //      case 0:
+                        //        printf("option %s", long_options[option_index].name);
+                        //        if (optarg)
+                        //          printf(" with arg %s", optarg);
+                        //        printf("\n");
+                        //        break;
+                        case 's':
+                                if (optarg) {
+                                        *src_repo_ptr = optarg;
+                                } else {
+                                        printf("source needs an option\n");
+                                        return 1;
+                                }
+                                break;
+                        case 'd':
+                                if (optarg) {
+                                        *dst_repo_ptr = optarg;
+                                } else {
+                                        printf("destination needs an option\n");
+                                        return 1;
+                                }
+                                break;
+                        case 'l':
+                                //        if (optarg) {
+                                //          printf(" l optarg= %s\n",optarg);
+                                //        }
+                                last_n=atoi(optarg);
+                                break;
+                        case 'k':
+                                keep = 1;
+                                break;
+                        case 'n':
+                                noop = 1;
+                                break;
+                        case 'c':
+                                getcomps = 1;
+                                break;
+                        case '0':
+                                getothermd = 1;
+                                break;
+                        case 'K':
+                                if (optarg) {
+                                        keyfile = optarg;
+                                } else {
+                                        printf("keyfile needs an option\n");
+                                        return 1;
+                                }
+                                break;
+                        case 'C':
+                                if (optarg) {
+                                        certfile = optarg;
+                                } else {
+                                        printf("certfile needs an option\n");
+                                        return 1;
+                                }
+                                break;
+                        case 'A':
+                                if (optarg) {
+                                        cafile = optarg;
+                                } else {
+                                        printf("cafile needs an option\n");
+                                        return 1;
+                                }
+                                break;
+                        case '?':
+                                break;
+                        default:
+                                abort();
+                }
+        }
+        return 0;
 }

@@ -14,6 +14,11 @@ vim: tabstop=2 shiftwidth=2 expandtab
 extern char *keyfile, *certfile, *cafile;
 extern bool noop;
 extern bool verifyssl;
+extern int last_n;
+extern bool keep;
+extern bool getcomps;
+extern bool getothermd;
+
 
 struct MemoryStruct {
   char *memory;
@@ -25,6 +30,17 @@ struct rpm  {
   size_t size;
   bool action;
 };
+
+struct stats {
+        int src_size;
+        int dst_size;
+        int downloaded;
+        int download_skipped;
+        int deleted;
+        double down_bytes;
+};
+
+extern struct stats stats;
 
 int get_http_to_file(FILE *fp,char *url, bool verbose);
 
@@ -51,3 +67,5 @@ int xferinfo(void *p, curl_off_t dltotal, curl_off_t dlnow, curl_off_t utotal, c
 void usage(void);
 
 void debug(int indent, char *message);
+
+int get_options(int argc, char **argv, char **src_repo_ptr, char **dst_repo_ptr);
