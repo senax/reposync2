@@ -50,8 +50,6 @@ void print_element_names(xmlNode * a_node);
 
 xmlXPathObjectPtr getnodeset(xmlDocPtr doc, xmlChar *namespace, xmlChar *xpath);
 
-int get_primary_url(char *repomd_xml, char **postfix);
-
 int get_xml(char *url, char **xml);
 
 int get_primary_xml(char *repo, char **primary_xml);

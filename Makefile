@@ -17,5 +17,8 @@ run: reposync2
 epel: reposync2
 	./reposync2 -s http://mirrorservice.org/sites/dl.fedoraproject.org/pub/epel/7/x86_64/ -d /vol1/Linux/dist/epel/7/x86_64 -k -l 2 -n
 
+epeld: reposync2
+	./reposync2 -s http://mirrorservice.org/sites/dl.fedoraproject.org/pub/epel/7/x86_64/ -d /vol1/Linux/dist/epel/7/x86_64 -l 1 -n
+
 epel_python:
 	reposync --config epel.repo  --repoid epel --newest-only --download_path=/vol1/Linux/dist/epel/7/x86_64 --norepopath 

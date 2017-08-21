@@ -30,7 +30,7 @@ bool noop=0;
 bool verifyssl=1;
 bool getcomps=0;
 bool getothermd=0;
-bool keep=1;
+bool keep=0;
 int last_n=0;
 struct stats stats;
 struct timeval starttime, prevtime;
@@ -290,6 +290,15 @@ void cleanup_source(struct rpm *rpms, int size,int last_n)
 
 }
 
+int count_actions(struct rpm *rpms, int size)
+{
+        int i, actions = 0;
+        for (i = 0; i<size;i++) {
+                if ( rpms[i].action ) actions++;
+        }
+        return actions;
+}
+
 void compare_repos(struct rpm *src_rpms, int src_size,struct rpm *dst_rpms, int dst_size)
 {
         /*
@@ -319,6 +328,8 @@ void compare_repos(struct rpm *src_rpms, int src_size,struct rpm *dst_rpms, int 
                 simple_in_a_not_b(dst_rpms, dst_size, src_rpms, src_size); // delete these
                 debug(0,"keep=0, simple_in_a_not_b(dst,src)");
         }
+        printf("%d rpms to download.\n", count_actions(src_rpms, src_size));
+        printf("%d rpms to delete.\n", count_actions(dst_rpms, dst_size));
         debug(-1,"compare_repos done");
 }
 
@@ -341,7 +352,8 @@ void download_rpms(char *baseurl, struct rpm *rpms, int size, char *targetdir)
                         }
                         stats.downloaded++;
                         if (noop) {
-                                printf("NOOP: curl %s -> %s\n", fullsrc, fullpath);
+                                // printf("NOOP: curl %s -> %s\n", fullsrc, fullpath);
+                                printf("NOOP: download %s\n", rpms[i].location);
                         } else {
                                 // printf("Downloading %s..\n",fullsrc);
                                 FILE *fp=fopen(fullpath, "wb");
@@ -397,6 +409,8 @@ int sync_repo(char *src, char *dst)
                 perror("source does not contain any rpms?\n");
                 exit(1);
         }
+        printf("src: %d rpms in %s\n",rpm_src_size, src);
+        printf("dst: %d rpms in %s\n",rpm_dst_size, dst);
         debug(0,"compare_repos");
         compare_repos(rpm_src_ptr, rpm_src_size, rpm_dst_ptr, rpm_dst_size);
         debug(0,"download_rpms");
@@ -406,9 +420,9 @@ int sync_repo(char *src, char *dst)
         debug(0,"sync_repo done.");
         // print_rpms(rpm_src_ptr, rpm_src_size);
         // print_rpms(rpm_dst_ptr, rpm_dst_size);
-        printf("\n");
-        printf("src: %d rpms in %s\n",rpm_src_size, src);
-        printf("dst: %d rpms in %s\n",rpm_dst_size, dst);
+//        printf("\n");
+//        printf("src: %d rpms in %s\n",rpm_src_size, src);
+//        printf("dst: %d rpms in %s\n",rpm_dst_size, dst);
         debug(-1,"sync_repo done");
         return 0;
 }
@@ -450,8 +464,8 @@ int main(int argc, char **argv)
         }
         debug(0,"main start");
         LIBXML_TEST_VERSION
-        printf("src=%s\n", src_repo_ptr);
-        printf("dst='%s'\n", dst_repo_ptr);
+//        printf("src=%s\n", src_repo_ptr);
+//        printf("dst='%s'\n", dst_repo_ptr);
         //        printf("keep=%d\n", keep);
         //        printf("last_n=%d\n", last_n);
         //        printf("noop=%d\n", noop);

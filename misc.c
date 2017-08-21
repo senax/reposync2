@@ -40,7 +40,7 @@ size_t write_file(FILE *fp, size_t size, size_t nmemb, FILE *stream)
 int get_http_to_file(FILE *fp, char *url, bool verbose)
 {
         debug(1,"get_http_to_file");
-        printf("get_http_to_file: %s\n",url);
+        printf("Downloading %s\n",url);
         curl_global_init(CURL_GLOBAL_ALL);
         CURL *curl_handle;
         CURLcode res;
@@ -155,11 +155,12 @@ xmlXPathObjectPtr getnodeset(xmlDocPtr doc, xmlChar *namespace, xmlChar *xpath)
         }
         if(xmlXPathNodeSetIsEmpty(result->nodesetval)){
                 xmlXPathFreeObject(result);
-                printf("No result for %s\n", xpath);
+//                printf("No result for %s\n", xpath);
                 return NULL;
         }
         return result;
 }
+
 int get_href_from_xml(char *repomd_xml, char *data_type, char **postfix)
 {
         xmlDocPtr doc;
@@ -178,14 +179,21 @@ int get_href_from_xml(char *repomd_xml, char *data_type, char **postfix)
         xmlXPathObjectPtr result;
 
         result = getnodeset(doc, href, (xmlChar *)xpath);
-
+/*
+   <data type="group">
+    <checksum type="sha256">e9b3b52d52c8effd364e6086d2845124296385f62ae67c16684015b947650049</checksum>
+    <location href="repodata/e9b3b52d52c8effd364e6086d2845124296385f62ae67c16684015b947650049-comps-epel7.xml"/>
+    <timestamp>1502691632</timestamp>
+    <size>1349657</size>
+  </data>
+*/
         if (result && result->nodesetval->nodeNr == 1 ) {
                 nodeset = result->nodesetval;
                 xmlChar *href = xmlGetProp(nodeset->nodeTab[0],(xmlChar *)"href");
                 *postfix = strdup((char *)href);
-                printf("POSTFIX=%s\n",href);
+//                printf("POSTFIX=%s\n",href);
         } else {
-                fprintf(stderr,"No results for %s\n", data_type);
+//                fprintf(stderr,"No results for %s\n", data_type);
                 retval = 1;
         }
         xmlXPathFreeObject(result);
@@ -195,45 +203,9 @@ int get_href_from_xml(char *repomd_xml, char *data_type, char **postfix)
         return retval;
 }
 
-int get_primary_url_OLD(char *repomd_xml, char **postfix)
-{
-        // printf("get_primary_url:\n");
-        xmlDocPtr doc;
-        char *url_postfix=calloc(1000*sizeof(*url_postfix),1);
-        doc = xmlReadMemory(repomd_xml,strlen(repomd_xml),"noname.xml",NULL,0);
-        if (doc == NULL) {
-                perror("get_primary_url: Failed to parse.\n");
-                puts(repomd_xml);
-                return 1;
-        }
-
-        xmlNodeSetPtr nodeset;
-        xmlChar *xpath = (xmlChar*) "//prefix:data[@type='primary']/prefix:location"; 
-        xmlXPathObjectPtr result;
-
-        result = getnodeset(doc,href,xpath);
-
-        if (result && result->nodesetval->nodeNr == 1 ) {
-                nodeset = result->nodesetval;
-
-                xmlChar *href = xmlGetProp(nodeset->nodeTab[0],(xmlChar *)"href");
-                strncpy(url_postfix,(char *)href,1000);
-
-                xmlXPathFreeObject(result);
-        } else {
-                fprintf(stderr,"No results???\n");
-                xmlXPathFreeObject(result);
-                return 1;
-        }
-        xmlFreeDoc(doc);
-
-        *postfix=url_postfix;
-        return 0;
-}
-
 int get_xml(char *url, char **xml)
 {
-        // get and optionally uncompress xml
+        // get and optionally uncompress xml to string
         // printf("in get_xml: %s\n",url);
         debug(0,"get_xml");
         Byte *content;
@@ -241,7 +213,7 @@ int get_xml(char *url, char **xml)
         if ( url[0] == '/') {
                 // FILE *fp = fopen(url,"r");
 //                debug(0,"uncompress file start");
-                fprintf(stderr,"DEBUG uncompress file %s\n", url);
+//                fprintf(stderr,"DEBUG uncompress file %s\n", url);
                 retval = uncompress_file(url, &content);
 //                debug(0,"uncompressed file");
                 // fclose(fp);
@@ -261,31 +233,40 @@ int get_xml(char *url, char **xml)
         return retval;
 }
 
+int get_repomd_xml(char *repo, char **xml)
+{
+        char *repomd_url;
+        int retval = 0;
+        asprintf(&repomd_url, "%s/repodata/repomd.xml", repo);
+        retval = get_xml(repomd_url, xml);
+        free(repomd_url);
+        if (retval != 0) return 1;
+
+        return retval;
+}
+
 int get_primary_xml(char *repo, char **primary_xml)
 {
         // printf("in get_primary_xml: %s\n",repo);
-        char *repomd_url;
         char *xml;
         int retval = 0;
-        asprintf(&repomd_url, "%s/repodata/repomd.xml", repo);
-        retval = get_xml(repomd_url, &xml);
-        free(repomd_url);
+
+        retval = get_repomd_xml(repo, &xml);
         if (retval != 0) return 1;
 
         char *postfix;
         char *primary_url;
         char *group;
         if ( get_href_from_xml(xml, "group", &group) == 0) {
-                fprintf(stderr,"COMPS/GROUP: %s\n",group);
+//                fprintf(stderr,"COMPS/GROUP: %s\n",group);
                 free(group);
         }
         char *updateinfo;
         if ( get_href_from_xml(xml, "updateinfo", &updateinfo) == 0) {
-                fprintf(stderr,"UPDATEINFO: %s\n",updateinfo);
+//                fprintf(stderr,"UPDATEINFO: %s\n",updateinfo);
                 free(updateinfo);
         }
         get_href_from_xml(xml, "primary", &postfix);
-        // get_primary_url(xml, &postfix);
         asprintf(&primary_url,"%s/%s",repo,postfix);
 
         retval = get_xml(primary_url, &xml);
@@ -471,9 +452,7 @@ int xferinfo(void *p, curl_off_t dltotal, curl_off_t dlnow, curl_off_t ultotal, 
         if ((curtime - myp->lastruntime) >= 1 ){
                 // update at least every 1 seconds
                 myp->lastruntime = curtime;
-                fprintf(stderr,"UP: %" CURL_FORMAT_CURL_OFF_T " of %" CURL_FORMAT_CURL_OFF_T "  DOWN: %" 
-                                CURL_FORMAT_CURL_OFF_T " of %" CURL_FORMAT_CURL_OFF_T "\r",
-                                ulnow, ultotal, dlnow, dltotal);
+                fprintf(stderr,"%ld of %ld %2.2f%%\r", dlnow, dltotal, 100.0 * dlnow  / dltotal );
         }
 
         return 0;
