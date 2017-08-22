@@ -30,10 +30,9 @@ bool noop=0;
 bool verifyssl=1;
 bool getcomps=0;
 bool getothermd=0;
-bool keep=0;
+bool keep=1;
 int last_n=0;
 struct stats stats;
-struct timeval starttime, prevtime;
 
 #define ELEMSIZE 100
 
@@ -290,13 +289,17 @@ void cleanup_source(struct rpm *rpms, int size,int last_n)
 
 }
 
-int count_actions(struct rpm *rpms, int size)
+void count_actions(struct rpm *rpms, int size, int *count, int *bytes)
 {
-        int i, actions = 0;
+        int i;
+        *count = 0;
+        *bytes = 0;
         for (i = 0; i<size;i++) {
-                if ( rpms[i].action ) actions++;
+                if ( rpms[i].action ) {
+                        *count+=1;
+                        *bytes+=rpms[i].size;
+                }
         }
-        return actions;
 }
 
 void compare_repos(struct rpm *src_rpms, int src_size,struct rpm *dst_rpms, int dst_size)
@@ -328,34 +331,37 @@ void compare_repos(struct rpm *src_rpms, int src_size,struct rpm *dst_rpms, int 
                 simple_in_a_not_b(dst_rpms, dst_size, src_rpms, src_size); // delete these
                 debug(0,"keep=0, simple_in_a_not_b(dst,src)");
         }
-        printf("%d rpms to download.\n", count_actions(src_rpms, src_size));
-        printf("%d rpms to delete.\n", count_actions(dst_rpms, dst_size));
+        count_actions(src_rpms, src_size, &stats.to_download, &stats.to_download_bytes);
+        count_actions(dst_rpms, dst_size, &stats.to_delete, &stats.to_delete_bytes);
+        printf("%d rpms and %d bytes to download.\n", stats.to_download, stats.to_download_bytes);
+        printf("%d rpms and %d bytes to delete.\n", stats.to_delete, stats.to_delete_bytes);
         debug(-1,"compare_repos done");
 }
 
 void download_rpms(char *baseurl, struct rpm *rpms, int size, char *targetdir)
 {
-        int i;
+        int i, counter = 0;
         for (i = 0; i<size;i++) {
                 if ( rpms[i].action ) {
                         char *fullpath;
                         char *fullsrc;
+                        counter++;
                         // print_rpms(&rpms[i], 1);
                         // printf("download %s/%s, %ld to %s\n",baseurl,rpms[i].location, rpms[i].size,targetdir);
                         ensure_dir(targetdir, rpms[i].location);
                         asprintf(&fullpath, "%s/%s", targetdir, rpms[i].location);
                         asprintf(&fullsrc, "%s/%s", baseurl, rpms[i].location);
                         if ( check_rpm_exists(targetdir, rpms[i]) != 0 ) {
-                                printf("Skipping download of %s already there but not in repodata.\n",rpms[i].location);
+                                printf("Skipping download %d/%d of %s already exists.\n", counter, stats.to_download, rpms[i].location);
                                 stats.download_skipped++;
                                 continue;
                         }
                         stats.downloaded++;
                         if (noop) {
                                 // printf("NOOP: curl %s -> %s\n", fullsrc, fullpath);
-                                printf("NOOP: download %s\n", rpms[i].location);
+                                printf("NOOP: download %d/%d %s\n", counter, stats.to_download, rpms[i].location);
                         } else {
-                                // printf("Downloading %s..\n",fullsrc);
+                                printf("Downloading %d/%d %s..\n", counter, stats.to_download, fullsrc);
                                 FILE *fp=fopen(fullpath, "wb");
                                 get_http_to_file(fp, fullsrc, 1);
                                 fclose(fp);
@@ -441,11 +447,11 @@ void debug(int indent, char *message)
         for (i=0; i < indentation; i++)
                 fprintf(stderr,"-");
         fprintf(stderr,"%.1f/%.0fms %s\n",
-                        ( temptime.tv_sec - prevtime.tv_sec) * 1000.0f + (temptime.tv_usec - prevtime.tv_usec ) / 1000.0f,
-                        ( temptime.tv_sec - starttime.tv_sec) * 1000.0f + (temptime.tv_usec - starttime.tv_usec ) / 1000.0f,
+                        ( temptime.tv_sec - stats.prevtime.tv_sec) * 1000.0f + (temptime.tv_usec - stats.prevtime.tv_usec ) / 1000.0f,
+                        ( temptime.tv_sec - stats.starttime.tv_sec) * 1000.0f + (temptime.tv_usec - stats.starttime.tv_usec ) / 1000.0f,
                         message
                );
-        gettimeofday(&prevtime, 0);
+        gettimeofday(&stats.prevtime, 0);
 }
 
 
@@ -453,8 +459,8 @@ int main(int argc, char **argv)
 {
         char *src_repo_ptr;
         char *dst_repo_ptr;
-        gettimeofday(&starttime, 0);
-        gettimeofday(&prevtime, 0);
+        gettimeofday(&stats.starttime, 0);
+        gettimeofday(&stats.prevtime, 0);
 
         get_options(argc, argv, &src_repo_ptr, &dst_repo_ptr);
 
@@ -473,12 +479,22 @@ int main(int argc, char **argv)
         //        printf("othermd=%d\n", getothermd);
         sync_repo(src_repo_ptr, dst_repo_ptr);
         debug(0,"main done");
+        gettimeofday(&stats.prevtime, 0);
+        printf("Completed in %.2fs\n",
+                ( stats.prevtime.tv_sec - stats.starttime.tv_sec ) +
+                ( stats.prevtime.tv_usec - stats.starttime.tv_usec ) / 1000000.0f
+               );
+
         printf("stats.src_size=%d\n", stats.src_size);
         printf("stats.dst_size=%d\n", stats.dst_size);
+        printf("stats.to_download=%d\n", stats.to_download);
+        printf("stats.to_download_bytes=%d\n", stats.to_download_bytes);
+        printf("stats.to_delete=%d\n", stats.to_delete);
+        printf("stats.to_delete_bytes=%d\n", stats.to_delete_bytes);
         printf("stats.downloaded=%d\n", stats.downloaded);
         printf("stats.download_skipped=%d\n", stats.download_skipped);
         printf("stats.deleted=%d\n", stats.deleted);
-        printf("stats.down_bytes=%f\n", stats.down_bytes);
+        printf("stats.down_bytes=%d\n", stats.down_bytes);
         printf("Done.\n");
         xmlCleanupParser();
         return 0;

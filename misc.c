@@ -40,7 +40,7 @@ size_t write_file(FILE *fp, size_t size, size_t nmemb, FILE *stream)
 int get_http_to_file(FILE *fp, char *url, bool verbose)
 {
         debug(1,"get_http_to_file");
-        printf("Downloading %s\n",url);
+//        printf("Downloading %s\n",url);
         curl_global_init(CURL_GLOBAL_ALL);
         CURL *curl_handle;
         CURLcode res;
@@ -74,7 +74,7 @@ int get_http_to_file(FILE *fp, char *url, bool verbose)
         double dl;
         CURLcode res_info = curl_easy_getinfo(curl_handle, CURLINFO_SIZE_DOWNLOAD, &dl);
         if(!res_info) {
-              stats.down_bytes+=dl;
+              stats.down_bytes+=(int)dl;
         }
 
         curl_easy_cleanup(curl_handle);
@@ -467,7 +467,7 @@ void usage(void)
         printf(" -n, --noop\tdo not actually download or delete any files.\n");
         printf(" -o, --other_metadata\t.\n");
         printf(" -c, --comps\t.\n");
-        printf(" -k, --keep\tkeep files in destination which are not present in source.\n");
+        printf(" -p, --purge\tpurge files in destination which are not present in source.\n");
         printf(" -l <n>, --last <n>\tOnly download last n versions of the same rpm. Defaults to 0 for all.\n");
         printf(" -s <url>, --source <url>\tSource URL, for example \\\n\t\thttp://mirrorservice.org/sites/dl.fedoraproject.org/pub/epel/7/x86_64\n");
         printf(" -d <directory>, --destination <directory>\t Destination directory, for example .\n");
@@ -482,7 +482,7 @@ int get_options(int argc, char **argv, char **src_repo_ptr, char **dst_repo_ptr)
         static struct option long_options[]= {
                 {"source", required_argument,0,'s'},
                 {"destination", required_argument,0,'d'},
-                {"keep", no_argument, 0, 'k'},
+                {"purge", no_argument, 0, 'p'},
                 {"noop", no_argument, 0, 'n'},
                 {"comps", no_argument,0,'c'},
                 {"other_metadata", no_argument,0,'o'},
@@ -525,8 +525,8 @@ int get_options(int argc, char **argv, char **src_repo_ptr, char **dst_repo_ptr)
                                 //        }
                                 last_n=atoi(optarg);
                                 break;
-                        case 'k':
-                                keep = 1;
+                        case 'p':
+                                keep = 0;
                                 break;
                         case 'n':
                                 noop = 1;

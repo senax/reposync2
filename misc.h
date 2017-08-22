@@ -37,7 +37,12 @@ struct stats {
         int downloaded;
         int download_skipped;
         int deleted;
-        double down_bytes;
+        int to_download;
+        int to_download_bytes;
+        int to_delete;
+        int to_delete_bytes;
+        int down_bytes;
+        struct timeval starttime, prevtime;
 };
 
 extern struct stats stats;
