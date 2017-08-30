@@ -19,6 +19,7 @@ extern bool keep;
 extern bool getcomps;
 extern bool getothermd;
 
+extern char *group_file;
 
 struct MemoryStruct {
   char *memory;
@@ -28,6 +29,23 @@ struct MemoryStruct {
 struct rpm  {
   char *name, *arch, *version, *release, *checksum_type, *checksum, *location;
   size_t size;
+  bool action;
+};
+
+/*
+<data type="other">
+  <checksum type="sha256">31781d234acf070623080749dfb55d250078768b87cd46fc6f9a538084709e1a</checksum>
+  <open-checksum type="sha256">3fefb1b833212f82496be873f3d1d6a3d1ce5a8a369700525e0c4e2295813194</open-checksum>
+  <location href="repodata/31781d234acf070623080749dfb55d250078768b87cd46fc6f9a538084709e1a-other.xml.gz"/>
+  <timestamp>1503429569</timestamp>
+  <size>2237354</size>
+  <open-size>21584567</open-size>
+</data>
+*/
+struct repofile  {
+  char *name, *checksum_type, *checksum, *location;
+  size_t size;
+  long timestamp;
   bool action;
 };
 
@@ -72,3 +90,11 @@ void usage(void);
 void debug(int indent, char *message);
 
 int get_options(int argc, char **argv, char **src_repo_ptr, char **dst_repo_ptr);
+
+int rpm_compare(struct rpm *p1, struct rpm *p2);
+
+void sort_rpms(struct rpm *rpms, int size);
+void count_actions(struct rpm *rpms, int size, int *count, int *bytes);
+void cleanup_source(struct rpm *rpms, int size,int last_n);
+void simple_in_a_not_b(struct rpm *src_rpms,int src_size,struct rpm *dst_rpms,int dst_size);
+int get_repofiles_from_repomd(char *xml, struct repofile **repofiles, int *repofiles_size);

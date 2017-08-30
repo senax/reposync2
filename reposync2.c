@@ -34,9 +34,11 @@ bool keep=1;
 int last_n=0;
 struct stats stats;
 
+char *group_file;
+
 #define ELEMSIZE 100
 
-struct ParserState {
+struct rpm_parserstate {
         int return_val;
         int index;
         struct rpm *rpms;
@@ -50,14 +52,28 @@ struct ParserState {
         char element[ELEMSIZE];
 };
 
-static xmlSAXHandler my_handlers;
+struct repomd_parserstate {
+        int return_val;
+        int index;
+        struct repofile *repofiles;
+        bool data;
+        bool checksum;
+        bool location;
+        bool timestamp;
+        bool size;
+        char element[ELEMSIZE];
+};
 
-void OnStartDocument(struct ParserState *ctx)
+
+static xmlSAXHandler rpm_handlers;
+static xmlSAXHandler repomd_handlers;
+
+void rpm_startdocument(struct rpm_parserstate *ctx)
 {
         ctx->index = 0;
 }
 
-void OnStartElement(struct ParserState *ctx, const xmlChar* fullname, const xmlChar** atts)
+void rpm_startelement(struct rpm_parserstate *ctx, const xmlChar* fullname, const xmlChar** atts)
 {
         if ( strcmp("package", (char *)fullname) == 0 && strcmp("type", (char *)atts[0]) == 0 && strcmp("rpm", (char *)atts[1]) == 0) {
                 ctx->package = 1;
@@ -108,7 +124,7 @@ void OnStartElement(struct ParserState *ctx, const xmlChar* fullname, const xmlC
         }
 }
 
-static void OnEndElement( struct ParserState *ctx, const xmlChar* name)
+static void rpm_endelement( struct rpm_parserstate *ctx, const xmlChar* name)
 {
         if ( strcmp("package", (char *)name) == 0 ) {
                 ctx->package = 0;
@@ -117,7 +133,7 @@ static void OnEndElement( struct ParserState *ctx, const xmlChar* name)
         ctx->element[0]='\0';
 }
 
-static void OnCharacters( struct ParserState *ctx, const xmlChar *ch, int len)
+static void rpm_character( struct rpm_parserstate *ctx, const xmlChar *ch, int len)
 {
         char chars[len + 1];
         strncpy(chars, (const char *)ch, len);
@@ -145,21 +161,21 @@ struct rpm *rpms_from_xml(char *xml, int *num_results)
 {
         debug(1,"in rpms_from_xml:");
 //        struct rpm *rpms = NULL;
-        struct ParserState my_state;
+        struct rpm_parserstate my_state;
         int retval = 0;
         my_state.rpms = NULL;
         *num_results = 0;
 //        xmlChar *primary_ns = (xmlChar *)"http://linux.duke.edu/metadata/common";
-        my_handlers.startDocument = (void *)OnStartDocument;
-        my_handlers.startElement = (void *)OnStartElement;
-        my_handlers.endElement = (void *)OnEndElement;
-        my_handlers.characters = (void *)OnCharacters;
-        retval = xmlSAXUserParseMemory(&my_handlers,&my_state,xml,strlen(xml));
+        rpm_handlers.startDocument = (void *)rpm_startdocument;
+        rpm_handlers.startElement = (void *)rpm_startelement;
+        rpm_handlers.endElement = (void *)rpm_endelement;
+        rpm_handlers.characters = (void *)rpm_character;
+        retval = xmlSAXUserParseMemory(&rpm_handlers,&my_state,xml,strlen(xml));
         if (retval != 0) exit(1);
 //        fprintf(stderr,"xmlSAXUserParseMemory returned %d\n",retval); 
 //        fprintf(stderr,"my_state.index %d\n",my_state.index); 
         my_state.rpms = calloc( my_state.index + 1, sizeof(struct rpm));
-        retval = xmlSAXUserParseMemory(&my_handlers,&my_state,xml,strlen(xml));
+        retval = xmlSAXUserParseMemory(&rpm_handlers,&my_state,xml,strlen(xml));
 
         debug(-1,"rpms_from_xml done\n");
         *num_results=my_state.index;
@@ -188,118 +204,105 @@ int get_rpms(char *repo, struct rpm **retval, int *result_size)
         }
 }
 
-int rpm_compare(struct rpm *p1, struct rpm *p2)
+void repomd_startdocument(struct repomd_parserstate *ctx)
 {
-        // compare name, arch, version, release
-        int name_cmp = strcmp((const char *)p1->name, (const char *)p2->name);
-        if (name_cmp != 0) {
-                return name_cmp;
-        } 
-        // compare arch
-        int arch_cmp = strverscmp((const char *)p1->arch, (const char *)p2->arch);
-        if (arch_cmp != 0) {
-                return arch_cmp;
-        }
-        // compare versions.
-        int ver_cmp = strverscmp((const char *)p1->version, (const char *)p2->version);
-        if (ver_cmp != 0) {
-                return ver_cmp;
-        }
-        // compare releases.
-        int rel_cmp = strverscmp((const char *)p1->release, (const char *)p2->release);
-        if (rel_cmp != 0) {
-                return rel_cmp;
-        }
-        return 0;
+        ctx->index = 0;
 }
 
-void sort_rpms(struct rpm *rpms, int size)
+void repomd_startelement(struct repomd_parserstate *ctx, const xmlChar* fullname, const xmlChar** atts)
 {
-        qsort(rpms, size, sizeof(struct rpm), (__compar_fn_t)rpm_compare);
-}
+        if ( strcmp("data", (char *)fullname) == 0 && strcmp("type", (char *)atts[0]) == 0 ) {
+                ctx->data = 1;
+//                ctx->repofiles[ctx->index].location = strdup((char *)atts[i+1]);
+//                printf("NAME=%s\n", atts[1]);
+        }
+        if (!ctx->repofiles) return;
 
-void simple_in_a_not_b(struct rpm *src_rpms,int src_size,struct rpm *dst_rpms,int dst_size)
-{
-        /*
-         * improvements; keep position of previous name+arch strcmp < 0 in dst as starting position for next search. 
-         * stop searching when strcmp names < 0 (i.e. src < dst or dst  after src.
-         */
-        int src;
-        int dst_start=0;
-        for (src=0;src<src_size;src++) {
-                int dst = 0;
-                bool found = 0;
-                for (dst = dst_start; dst<dst_size; dst++) {
-                        if ( rpm_compare(&src_rpms[src], &dst_rpms[dst]) == 0 ) {
-                                found = 1;
-                                break;
-                        } else {
-                                int cmp = strcmp(src_rpms[src].name, dst_rpms[dst].name);
-                                if ( cmp > 0 ) { // move up start of dst search if name > dst_name
-                                        // printf("moving dst_start to %s:%s %d/%d\n",src_rpms[src].name, dst_rpms[dst].name,dst_start,dst_size);
-                                        dst_start = dst;
-                                } else if ( cmp < 0 ) { // stop searching if name in dest is after src. they are sorted.
-                                        // printf("early exit. %s:%s %d/%d\n",src_rpms[src].name, dst_rpms[dst].name,dst,dst_size);
-                                        found = 0;
-                                        break;
+        // in data scope?
+        if (ctx->data) {
+                strcpy(ctx->element,  (char *)fullname);
+                if ( strcmp("data",(char *)fullname) == 0) {
+                        int i=0;
+                        while ( atts && atts[i] && atts[i+1] ){
+                                if (strcmp("type", (char *)atts[i]) == 0) {
+                                        ctx->repofiles[ctx->index].name = strdup((char *)atts[i+1]);
                                 }
+                                i+=2;
                         }
                 }
-                if (found != 0) {
-                        src_rpms[src].action = 0;
-                } else {
-                        src_rpms[src].action = 1;
+                if ( strcmp("checksum",(char *)fullname) == 0) {
+                        int i=0;
+                        while ( atts && atts[i] && atts[i+1] ){
+                                if (strcmp("type", (char *)atts[i]) == 0) {
+                                        ctx->repofiles[ctx->index].checksum_type = strdup((char *)atts[i+1]);
+                                }
+                                i+=2;
+                        }
+                }
+                if ( strcmp("location",(char *)fullname) == 0) {
+                        int i=0;
+                        while ( atts && atts[i] && atts[i+1] ){
+                                if (strcmp("href", (char *)atts[i]) == 0) {
+                                        ctx->repofiles[ctx->index].location = strdup((char *)atts[i+1]);
+                                }
+                                i+=2;
+                        }
                 }
         }
 }
 
-void cleanup_source(struct rpm *rpms, int size,int last_n)
+static void repomd_endelement( struct repomd_parserstate *ctx, const xmlChar* name)
 {
-        /*
-         * work backwards. check for same, when more than last_n same ones, clear action flag to ignore them.
-         */
-        if (last_n < 1) { return;}
-        int i = size - 1;
-        int same;
-        char *name, *arch;
-        while (i>=0) {
-                same = 0;
-                name = strdup(rpms[i].name);
-                arch = strdup(rpms[i].arch);
-                //    printf("considering %d/%d: %s-%s\n",i,size,name,arch);
-                while (
-                                i>=0 &&
-                                strcmp(name,rpms[i].name) == 0 &&
-                                strcmp(arch,rpms[i].arch) == 0 
-                      ) {
-                        same++;
-                        // if (same > 1) {
-                        //   printf("found same on position %d, same=%d\n",i,same);
-                        // }
-                        // if same > last_n; then clear action flag.
-                        if (same > last_n) {
-                                // printf("last_n=%d, ignoring %s-%s-%s-%s\n", last_n, rpms[i].name, rpms[i].version, rpms[i].release, rpms[i].arch);
-                                rpms[i].action = 0;
-                        }
-                        i--;
-                }
-                free(name);
-                free(arch);
-        } 
-
+        if ( strcmp("data", (char *)name) == 0 ) {
+                ctx->data = 0;
+                ctx->index++;
+        }
+        ctx->element[0]='\0';
 }
 
-void count_actions(struct rpm *rpms, int size, int *count, int *bytes)
+static void repomd_character( struct repomd_parserstate *ctx, const xmlChar *ch, int len)
 {
-        int i;
-        *count = 0;
-        *bytes = 0;
-        for (i = 0; i<size;i++) {
-                if ( rpms[i].action ) {
-                        *count+=1;
-                        *bytes+=rpms[i].size;
-                }
+        char chars[len + 1];
+        strncpy(chars, (const char *)ch, len);
+        chars[len] = '\0';
+        if (!ctx->repofiles)
+                return;
+        if (!ctx->data)
+                return;
+        if (strlen(ctx->element) == 0)
+                return;
+        if (strcmp("timestamp", (char *)ctx->element) == 0) {
+                ctx->repofiles[ctx->index].timestamp = atoi(chars);
+        } else if (strcmp("size", (char *)ctx->element) == 0) {
+                ctx->repofiles[ctx->index].size = atoi(chars);
+        } else if (strcmp("checksum", (char *)ctx->element) == 0) {
+                ctx->repofiles[ctx->index].checksum = strdup(chars);
         }
+}
+
+int get_repofiles_from_repomd(char *xml, struct repofile **repofiles, int *repofiles_size)
+{
+        printf("HERE IN GET_REPOFILES_FROM_REPOMD\n\n");
+        struct repomd_parserstate my_state;
+        int retval = 0;
+        my_state.repofiles = NULL;
+        *repofiles_size = 0;
+//        xmlChar *primary_ns = (xmlChar *)"http://linux.duke.edu/metadata/common";
+        repomd_handlers.startDocument = (void *)repomd_startdocument;
+        repomd_handlers.startElement = (void *)repomd_startelement;
+        repomd_handlers.endElement = (void *)repomd_endelement;
+        repomd_handlers.characters = (void *)repomd_character;
+        retval = xmlSAXUserParseMemory(&repomd_handlers,&my_state,xml,strlen(xml));
+        if (retval != 0) exit(1);
+//        fprintf(stderr,"xmlSAXUserParseMemory returned %d\n",retval); 
+//        fprintf(stderr,"my_state.index %d\n",my_state.index); 
+        my_state.repofiles = calloc( my_state.index + 1, sizeof(struct repofile));
+        retval = xmlSAXUserParseMemory(&repomd_handlers,&my_state,xml,strlen(xml));
+
+        debug(-1,"get_repofiles_from_repomd done\n");
+        *repofiles_size=my_state.index;
+        *repofiles = my_state.repofiles;
+        return 0;
 }
 
 void compare_repos(struct rpm *src_rpms, int src_size,struct rpm *dst_rpms, int dst_size)
@@ -429,6 +432,18 @@ int sync_repo(char *src, char *dst)
 //        printf("\n");
 //        printf("src: %d rpms in %s\n",rpm_src_size, src);
 //        printf("dst: %d rpms in %s\n",rpm_dst_size, dst);
+        if (getcomps != 0 && noop==0 ) {
+                printf("COMPS: %s to %s\n", group_file, dst);
+                char *fullpath;
+                char *fullsrc;
+                asprintf(&fullpath, "%s/comps", dst);
+                asprintf(&fullsrc, "%s/%s", src, group_file);
+                FILE *fp=fopen(fullpath, "wb");
+                get_http_to_file(fp, fullsrc, 1);
+                fclose(fp);
+                free(fullpath);
+                free(fullsrc);
+        } 
         debug(-1,"sync_repo done");
         return 0;
 }

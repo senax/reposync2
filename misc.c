@@ -254,11 +254,17 @@ int get_primary_xml(char *repo, char **primary_xml)
         retval = get_repomd_xml(repo, &xml);
         if (retval != 0) return 1;
 
+        int repofiles_size;
+        struct repofile *repofiles;
+        get_repofiles_from_repomd(xml, &repofiles, &repofiles_size);
+        printf("REPOFILES_SIZE=%d\n", repofiles_size);
+        printf("repofiles[0].name=%s\n",repofiles[0].name);
         char *postfix;
         char *primary_url;
         char *group;
         if ( get_href_from_xml(xml, "group", &group) == 0) {
-//                fprintf(stderr,"COMPS/GROUP: %s\n",group);
+                fprintf(stderr,"COMPS/GROUP: %s\n",group);
+                group_file = strdup(group);
                 free(group);
         }
         char *updateinfo;
@@ -472,6 +478,120 @@ void usage(void)
         printf(" -s <url>, --source <url>\tSource URL, for example \\\n\t\thttp://mirrorservice.org/sites/dl.fedoraproject.org/pub/epel/7/x86_64\n");
         printf(" -d <directory>, --destination <directory>\t Destination directory, for example .\n");
 
+}
+
+int rpm_compare(struct rpm *p1, struct rpm *p2)
+{
+        // compare name, arch, version, release
+        int name_cmp = strcmp((const char *)p1->name, (const char *)p2->name);
+        if (name_cmp != 0) {
+                return name_cmp;
+        }
+        // compare arch
+        int arch_cmp = strverscmp((const char *)p1->arch, (const char *)p2->arch);
+        if (arch_cmp != 0) {
+                return arch_cmp;
+        }
+        // compare versions.
+        int ver_cmp = strverscmp((const char *)p1->version, (const char *)p2->version);
+        if (ver_cmp != 0) {
+                return ver_cmp;
+        }
+        // compare releases.
+        int rel_cmp = strverscmp((const char *)p1->release, (const char *)p2->release);
+        if (rel_cmp != 0) {
+                return rel_cmp;
+        }
+        return 0;
+}
+
+void sort_rpms(struct rpm *rpms, int size)
+{
+        qsort(rpms, size, sizeof(struct rpm), (__compar_fn_t)rpm_compare);
+}
+
+void cleanup_source(struct rpm *rpms, int size,int last_n)
+{
+        /*
+         * work backwards. check for same, when more than last_n same ones, clear action flag to ignore them.
+         */
+        if (last_n < 1) { return;}
+        int i = size - 1;
+        int same;
+        char *name, *arch;
+        while (i>=0) {
+                same = 0;
+                name = strdup(rpms[i].name);
+                arch = strdup(rpms[i].arch);
+                //    printf("considering %d/%d: %s-%s\n",i,size,name,arch);
+                while (
+                                i>=0 &&
+                                strcmp(name,rpms[i].name) == 0 &&
+                                strcmp(arch,rpms[i].arch) == 0
+                      ) {
+                        same++;
+                        // if (same > 1) {
+                        //   printf("found same on position %d, same=%d\n",i,same);
+                        // }
+                        // if same > last_n; then clear action flag.
+                        if (same > last_n) {
+                                // printf("last_n=%d, ignoring %s-%s-%s-%s\n", last_n, rpms[i].name, rpms[i].version, rpms[i].release, rpms[i].arch);
+                                rpms[i].action = 0;
+                        }
+                        i--;
+                }
+                free(name);
+                free(arch);
+        }
+
+}
+
+void count_actions(struct rpm *rpms, int size, int *count, int *bytes)
+{
+        int i;
+        *count = 0;
+        *bytes = 0;
+        for (i = 0; i<size;i++) {
+                if ( rpms[i].action ) {
+                        *count+=1;
+                        *bytes+=rpms[i].size;
+                }
+        }
+}
+
+void simple_in_a_not_b(struct rpm *src_rpms,int src_size,struct rpm *dst_rpms,int dst_size)
+{
+        /*
+         * improvements; keep position of previous name+arch strcmp < 0 in dst as starting position for next search.
+         * stop searching when strcmp names < 0 (i.e. src < dst or dst  after src.
+         */
+        int src;
+        int dst_start=0;
+        for (src=0;src<src_size;src++) {
+                int dst = 0;
+                bool found = 0;
+                for (dst = dst_start; dst<dst_size; dst++) {
+                        if ( rpm_compare(&src_rpms[src], &dst_rpms[dst]) == 0 ) {
+                                found = 1;
+                                break;
+                        } else {
+                                int cmp = strcmp(src_rpms[src].name, dst_rpms[dst].name);
+                                if ( cmp > 0 ) { // move up start of dst search if name > dst_name
+                                        // printf("moving dst_start to %s:%s %d/%d\n",src_rpms[src].name, dst_rpms[dst].name,dst_start,dst_size);
+                                        dst_start = dst;
+                                } else if ( cmp < 0 ) { // stop searching if name in dest is after src. they are sorted.
+                                        // printf("early exit. %s:%s %d/%d\n",src_rpms[src].name, dst_rpms[dst].name,dst,dst_size);
+                                        found = 0;
+                                        break;
+                                }
+                        }
+                }
+                if (found != 0) {
+                        src_rpms[src].action = 0;
+                } else {
+                        src_rpms[src].action = 1;
+                }
+        }
 }
 
 

@@ -15,7 +15,7 @@ run: reposync2
 	./reposync2 -s 'file:///home/frank/REPOSYNC/c/SOURCE' -d '/home/frank/REPOSYNC/c/DEST' # -n
 
 epel: reposync2
-	./reposync2 -s http://mirrorservice.org/sites/dl.fedoraproject.org/pub/epel/7/x86_64/ -d /vol1/Linux/dist/epel/7/x86_64 -p -l 2 -n
+	./reposync2 -s http://mirrorservice.org/sites/dl.fedoraproject.org/pub/epel/7/x86_64/ -d /vol1/Linux/dist/epel/7/x86_64 -p -l 1 --comps -n
 
 epeld: reposync2
 	./reposync2 -s http://mirrorservice.org/sites/dl.fedoraproject.org/pub/epel/7/x86_64/ -d /vol1/Linux/dist/epel/7/x86_64 -l 1 -n
