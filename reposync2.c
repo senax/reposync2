@@ -356,10 +356,14 @@ void download_rpms(char *baseurl, struct rpm *rpms, int size, char *targetdir)
                         counter++;
                         // print_rpms(&rpms[i], 1);
                         // printf("download %s/%s, %ld to %s\n",baseurl,rpms[i].location, rpms[i].size,targetdir);
-                        ensure_dir(targetdir, rpms[i].location);
-                        asprintf(&fullpath, "%s/%s", targetdir, rpms[i].location);
+                        char *clean_location = strdup(rpms[i].location);
+                        char *t = clean_location;
+                        while( (t = strstr(t, "../")) )
+                                        memmove(t, t+strlen("../"), 1 + strlen(t + strlen("../")));
+                        ensure_dir(targetdir, clean_location);
+                        asprintf(&fullpath, "%s/%s", targetdir, clean_location);
                         asprintf(&fullsrc, "%s/%s", baseurl, rpms[i].location);
-                        if ( check_rpm_exists(targetdir, rpms[i]) != 0 ) {
+                        if ( check_rpm_exists(fullpath, rpms[i]) != 0 ) {
                                 printf("Skipping download %d/%d of %s already exists.\n", counter, stats.to_download, rpms[i].location);
                                 stats.download_skipped++;
                                 continue;

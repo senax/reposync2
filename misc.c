@@ -415,12 +415,10 @@ int compare_checksum(char *checksum_type,char *checksum,char *path)
         }
 }
 
-int check_rpm_exists(char *targetdir, struct rpm rpm){
+int check_rpm_exists(char *path, struct rpm rpm){
         // check if rpm exists in targetdir with same size/checksum
         struct stat rpmstat;
-        char *path;
         int retval = 0;
-        asprintf(&path,"%s/%s",targetdir,rpm.location);
         if (lstat(path,&rpmstat) == -1) {
                 // file not found
                 goto free_path;
