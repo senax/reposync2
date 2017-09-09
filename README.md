@@ -41,4 +41,5 @@ Python-reposync takes around two minutes for the same action.
 # Todo
 - download comps.xml / updateinfo.xml
 - general cleanup
+- check location for ../ and remove them (i.e. only write to targetdir and below)
 
