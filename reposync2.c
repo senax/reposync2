@@ -373,6 +373,7 @@ void download_rpms(char *baseurl, struct rpm *rpms, int size, char *targetdir)
                         if ( check_rpm_exists(fullpath, rpms[i]) != 0 ) {
                                 printf("Skipping download %d/%d of %s already exists.\n", counter, stats.to_download, rpms[i].location);
                                 stats.download_skipped++;
+                                free(fullpath);
                                 continue;
                         }
                         stats.downloaded++;

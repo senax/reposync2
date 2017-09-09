@@ -421,7 +421,7 @@ int check_rpm_exists(char *path, struct rpm rpm){
         int retval = 0;
         if (lstat(path,&rpmstat) == -1) {
                 // file not found
-                goto free_path;
+                return retval;
         } else if (rpmstat.st_size != rpm.size) {
                 // check size
                 printf("DEST found but size wrong: file size: %ld rpm size: %ld\n",rpmstat.st_size,rpm.size);
@@ -431,7 +431,7 @@ int check_rpm_exists(char *path, struct rpm rpm){
                         printf("unlinking(%s)\n",path);
                         unlink(path);
                 }
-                goto free_path;
+                return retval;
         } else if ( compare_checksum(rpm.checksum_type,rpm.checksum,path) != 0) {
                 // size is same but checksums differ
                 printf("DEST found with same size: file size: %ld rpm size: %ld\n",rpmstat.st_size,rpm.size);
@@ -441,11 +441,9 @@ int check_rpm_exists(char *path, struct rpm rpm){
                         printf("unlinking(%s)\n",path);
                         unlink(path);
                 }
-                goto free_path;
+                return retval;
         }
         retval = 1;
-free_path:
-        free(path);
         return retval;
 }
 
