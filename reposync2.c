@@ -356,10 +356,17 @@ void download_rpms(char *baseurl, struct rpm *rpms, int size, char *targetdir)
                         counter++;
                         // print_rpms(&rpms[i], 1);
                         // printf("download %s/%s, %ld to %s\n",baseurl,rpms[i].location, rpms[i].size,targetdir);
+                        
+                        // ensure location does not start with / or has ../.
                         char *clean_location = strdup(rpms[i].location);
                         char *t = clean_location;
+
+                        if ( t[0] == '/' ) {
+                                memmove(t, t + 1, strlen(t) - 1);
+                        }
                         while( (t = strstr(t, "../")) )
-                                        memmove(t, t+strlen("../"), 1 + strlen(t + strlen("../")));
+                                memmove(t, t + strlen("../"), 1 + strlen(t + strlen("../")));
+
                         ensure_dir(targetdir, clean_location);
                         asprintf(&fullpath, "%s/%s", targetdir, clean_location);
                         asprintf(&fullsrc, "%s/%s", baseurl, rpms[i].location);
