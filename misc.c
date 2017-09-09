@@ -248,21 +248,24 @@ int get_repomd_xml(char *repo, char **xml)
 int get_primary_xml(char *repo, char **primary_xml)
 {
         // printf("in get_primary_xml: %s\n",repo);
+        char *postfix;
+        char *primary_url;
+        char *group;
         char *xml;
         int retval = 0;
 
         retval = get_repomd_xml(repo, &xml);
         if (retval != 0) return 1;
 
+
         int repofiles_size;
         struct repofile *repofiles;
         get_repofiles_from_repomd(xml, &repofiles, &repofiles_size);
         printf("REPOFILES_SIZE=%d\n", repofiles_size);
         printf("repofiles[0].name=%s\n",repofiles[0].name);
-        char *postfix;
-        char *primary_url;
-        char *group;
-        if ( get_href_from_xml(xml, "group", &group) == 0) {
+        /*
+        
+ if ( get_href_from_xml(xml, "group", &group) == 0) {
                 fprintf(stderr,"COMPS/GROUP: %s\n",group);
                 group_file = strdup(group);
                 free(group);
@@ -272,6 +275,7 @@ int get_primary_xml(char *repo, char **primary_xml)
 //                fprintf(stderr,"UPDATEINFO: %s\n",updateinfo);
                 free(updateinfo);
         }
+        */
         get_href_from_xml(xml, "primary", &postfix);
         asprintf(&primary_url,"%s/%s",repo,postfix);
 

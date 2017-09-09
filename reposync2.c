@@ -182,13 +182,18 @@ struct rpm *rpms_from_xml(char *xml, int *num_results)
         return my_state.rpms;
 }
 
+void check_repo_name(char *repo)
+{
+        if (repo[strlen(repo) - 1] == '/')
+                repo[strlen(repo) - 1] = '\0';
+}
+
 int get_rpms(char *repo, struct rpm **retval, int *result_size)
 {
         int ret = 0;
 //        printf("in get_rpms: %s\n",repo);
         debug(1,"in get_rpms: ");
-        if (repo[strlen(repo) - 1] == '/')
-                repo[strlen(repo) - 1] = '\0';
+        check_repo_name(repo);
         char *xml;
         ret = get_primary_xml(repo, &xml);
         if (ret != 0) return 1;
