@@ -64,17 +64,18 @@ int get_http_to_file(FILE *fp, char *url, bool verbose)
         if (certfile)  curl_easy_setopt(curl_handle, CURLOPT_SSLCERT, certfile);
         if (keyfile)  curl_easy_setopt(curl_handle, CURLOPT_SSLKEY, keyfile);
         if (cafile)  curl_easy_setopt(curl_handle, CURLOPT_CAINFO, cafile);
+        if (verifyssl==false)  curl_easy_setopt(curl_handle, CURLOPT_SSL_VERIFYPEER, false);
 
         res=curl_easy_perform(curl_handle);
         if (res != CURLE_OK){
                 fprintf(stderr,"curl_easy_perform() failed: %s\n",curl_easy_strerror(res));
                 exit(1);
         }
-        stats.downloaded++;
         double dl;
         CURLcode res_info = curl_easy_getinfo(curl_handle, CURLINFO_SIZE_DOWNLOAD, &dl);
         if(!res_info) {
-              stats.down_bytes+=(int)dl;
+                stats.down_bytes+=(int)dl;
+                stats.downloaded++;
         }
 
         curl_easy_cleanup(curl_handle);
@@ -211,23 +212,33 @@ int get_xml(char *url, char **xml)
         Byte *content;
         int retval=0;
         if ( url[0] == '/') {
-                // FILE *fp = fopen(url,"r");
-//                debug(0,"uncompress file start");
-//                fprintf(stderr,"DEBUG uncompress file %s\n", url);
                 retval = uncompress_file(url, &content);
-//                debug(0,"uncompressed file");
-                // fclose(fp);
         } else {
                 char *tempfile = tmpnam(NULL);
                 FILE *fp = fopen(tempfile,"w+b");
-//                debug(0,"get http_to_file");
                 get_http_to_file(fp, url, 0);
                 fclose(fp);
-//                debug(0,"uncompress");
                 retval = uncompress_file(tempfile, &content);
-//                debug(0,"gzfp");
                 unlink(tempfile);
                 // printf("CONTENT=%s\n",content);
+                /*
+                char tempfile[30] = "/tmp/reposync2.XXXXXX";
+                FILE *fp;
+                int fd = -1;
+                strncpy(tempfile, "/tmp/reposync2.XXXXXX", sizeof(tempfile));
+                if ((fd = mkstemp(tempfile)) == -1 || (fp = fdopen(fd, "w+b")) == NULL) {
+                        if (fd != -1) {
+                                unlink(tempfile);
+                                close(fd);
+                        }
+                        fprintf(stderr, "%s: %s\n", tempfile, strerror(errno));
+                        exit(1);
+                }
+                get_http_to_file(fp, url, 0);
+                retval = uncompress_file(tempfile, &content);
+                unlink(tempfile);
+                fclose(fp);
+                */
         }
         *xml = (char *)content;
         return retval;
@@ -245,26 +256,22 @@ int get_repomd_xml(char *repo, char **xml)
         return retval;
 }
 
-int get_primary_xml(char *repo, char **primary_xml)
+int get_primary_xml(char *repo, char *xml, char **primary_xml)
 {
         // printf("in get_primary_xml: %s\n",repo);
         char *postfix;
         char *primary_url;
-        char *group;
-        char *xml;
-        int retval = 0;
+        int retval;
 
-        retval = get_repomd_xml(repo, &xml);
-        if (retval != 0) return 1;
-
-
+        /*
         int repofiles_size;
         struct repofile *repofiles;
         get_repofiles_from_repomd(xml, &repofiles, &repofiles_size);
         printf("REPOFILES_SIZE=%d\n", repofiles_size);
-        printf("repofiles[0].name=%s\n",repofiles[0].name);
-        /*
-        
+        int i;
+        for (i=0; i< repofiles_size; i++)
+                printf("repofiles[%d].name=%s\n",i, repofiles[i].name);
+
  if ( get_href_from_xml(xml, "group", &group) == 0) {
                 fprintf(stderr,"COMPS/GROUP: %s\n",group);
                 group_file = strdup(group);
@@ -277,7 +284,7 @@ int get_primary_xml(char *repo, char **primary_xml)
         }
         */
         get_href_from_xml(xml, "primary", &postfix);
-        asprintf(&primary_url,"%s/%s",repo,postfix);
+        asprintf(&primary_url,"%s/%s", repo, postfix);
 
         retval = get_xml(primary_url, &xml);
         free(postfix);
@@ -415,16 +422,16 @@ int compare_checksum(char *checksum_type,char *checksum,char *path)
         }
 }
 
-int check_rpm_exists(char *path, struct rpm rpm){
+int check_rpm_exists(char *path, size_t size, char *checksum_type, char *checksum){
         // check if rpm exists in targetdir with same size/checksum
         struct stat rpmstat;
         int retval = 0;
         if (lstat(path,&rpmstat) == -1) {
                 // file not found
                 return retval;
-        } else if (rpmstat.st_size != rpm.size) {
+        } else if (rpmstat.st_size != size) {
                 // check size
-                printf("DEST found but size wrong: file size: %ld rpm size: %ld\n",rpmstat.st_size,rpm.size);
+                printf("DEST found but size wrong: file size: %ld rpm size: %ld\n",rpmstat.st_size,size);
                 if (noop) {
                         printf("NOOP: would unlink(%s)\n",path);
                 } else {
@@ -432,9 +439,9 @@ int check_rpm_exists(char *path, struct rpm rpm){
                         unlink(path);
                 }
                 return retval;
-        } else if ( compare_checksum(rpm.checksum_type,rpm.checksum,path) != 0) {
+        } else if ( compare_checksum(checksum_type,checksum,path) != 0) {
                 // size is same but checksums differ
-                printf("DEST found with same size: file size: %ld rpm size: %ld\n",rpmstat.st_size,rpm.size);
+                printf("DEST found with same size: file size: %ld rpm size: %ld\n",rpmstat.st_size, size);
                 if (noop) {
                         printf("NOOP: would unlink(%s)\n",path);
                 } else {
@@ -467,12 +474,13 @@ int xferinfo(void *p, curl_off_t dltotal, curl_off_t dlnow, curl_off_t ultotal, 
 void usage(void)
 {
         printf("Simple rpm repo sync, compares remote and local repodata\n");
-        printf("Do not forget to run createrepo on the local copy afterward.\n");
+        printf("Do not forget to run createrepo on the local copy afterwards.\n");
         printf("Usage: .. \n");
         printf("Flags:\n");
         printf(" -n, --noop\tdo not actually download or delete any files.\n");
-        printf(" -o, --other_metadata\t.\n");
+//        printf(" -o, --other_metadata\t.\n");
         printf(" -c, --comps\t.\n");
+        printf(" -v, --verbose\t.\n");
         printf(" -p, --purge\tpurge files in destination which are not present in source.\n");
         printf(" -l <n>, --last <n>\tOnly download last n versions of the same rpm. Defaults to 0 for all.\n");
         printf(" -s <url>, --source <url>\tSource URL, for example \\\n\t\thttp://mirrorservice.org/sites/dl.fedoraproject.org/pub/epel/7/x86_64\n");
@@ -602,19 +610,22 @@ int get_options(int argc, char **argv, char **src_repo_ptr, char **dst_repo_ptr)
         static struct option long_options[]= {
                 {"source", required_argument,0,'s'},
                 {"destination", required_argument,0,'d'},
+                {"updaterepodata", no_argument, 0, 'u'},
                 {"purge", no_argument, 0, 'p'},
                 {"noop", no_argument, 0, 'n'},
                 {"comps", no_argument,0,'c'},
+                {"verbose", no_argument,0,'v'},
                 {"other_metadata", no_argument,0,'o'},
                 {"last", required_argument,0,'l'},
                 {"key", required_argument,0,'K'},
                 {"cert", required_argument,0,'C'},
                 {"ca", required_argument,0,'A'},
+                {"ignore_ssl", no_argument,0,'i'},
                 {0,0,0,0},
         };
         int option_index=0;
 
-        while ((opt = getopt_long(argc, argv, "s:d:knl:K:C:A:c", long_options, &option_index)) != -1) {
+        while ((opt = getopt_long(argc, argv, "s:d:uvpnl:K:C:A:c", long_options, &option_index)) != -1) {
                 //    printf("opt=%c\n",opt);
                 switch(opt) {
                         //      case 0:
@@ -645,17 +656,26 @@ int get_options(int argc, char **argv, char **src_repo_ptr, char **dst_repo_ptr)
                                 //        }
                                 last_n=atoi(optarg);
                                 break;
+                        case 'u':
+                                updaterepodata = true;
+                                break;
+                        case 'v':
+                                verbose = true;
+                                break;
                         case 'p':
-                                keep = 0;
+                                purge = true;
+                                break;
+                        case 'i':
+                                verifyssl = false;
                                 break;
                         case 'n':
-                                noop = 1;
+                                noop = true;
                                 break;
                         case 'c':
-                                getcomps = 1;
+                                getcomps = true;
                                 break;
                         case '0':
-                                getothermd = 1;
+                                getothermd = true;
                                 break;
                         case 'K':
                                 if (optarg) {

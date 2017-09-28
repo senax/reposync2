@@ -26,11 +26,13 @@ valgrind ./get_libxml --leak-check=full
 #include "misc.h"
 
 char *keyfile, *certfile, *cafile;
-bool noop=0;
-bool verifyssl=1;
-bool getcomps=0;
-bool getothermd=0;
-bool keep=1;
+bool verbose = false;
+bool noop = false;
+bool verifyssl = true;
+bool getcomps = false;
+bool getothermd = false;
+bool purge = false;
+bool updaterepodata = false;
 int last_n=0;
 struct stats stats;
 
@@ -160,20 +162,16 @@ struct rpm *rpms_from_xml(char *xml, int *num_results)
          */
 {
         debug(1,"in rpms_from_xml:");
-//        struct rpm *rpms = NULL;
         struct rpm_parserstate my_state;
         int retval = 0;
         my_state.rpms = NULL;
         *num_results = 0;
-//        xmlChar *primary_ns = (xmlChar *)"http://linux.duke.edu/metadata/common";
         rpm_handlers.startDocument = (void *)rpm_startdocument;
         rpm_handlers.startElement = (void *)rpm_startelement;
         rpm_handlers.endElement = (void *)rpm_endelement;
         rpm_handlers.characters = (void *)rpm_character;
         retval = xmlSAXUserParseMemory(&rpm_handlers,&my_state,xml,strlen(xml));
         if (retval != 0) exit(1);
-//        fprintf(stderr,"xmlSAXUserParseMemory returned %d\n",retval); 
-//        fprintf(stderr,"my_state.index %d\n",my_state.index); 
         my_state.rpms = calloc( my_state.index + 1, sizeof(struct rpm));
         retval = xmlSAXUserParseMemory(&rpm_handlers,&my_state,xml,strlen(xml));
 
@@ -188,14 +186,14 @@ void check_repo_name(char *repo)
                 repo[strlen(repo) - 1] = '\0';
 }
 
-int get_rpms(char *repo, struct rpm **retval, int *result_size)
+int get_rpms(char *repo, char *repo_xml, struct rpm **retval, int *result_size)
 {
         int ret = 0;
-//        printf("in get_rpms: %s\n",repo);
+        //        printf("in get_rpms: %s\n",repo);
         debug(1,"in get_rpms: ");
-        check_repo_name(repo);
+        //        check_repo_name(repo);
         char *xml;
-        ret = get_primary_xml(repo, &xml);
+        ret = get_primary_xml(repo, repo_xml, &xml);
         if (ret != 0) return 1;
         struct rpm *rpms = rpms_from_xml(xml, result_size);
         debug(0,"free(xml)");
@@ -218,8 +216,6 @@ void repomd_startelement(struct repomd_parserstate *ctx, const xmlChar* fullname
 {
         if ( strcmp("data", (char *)fullname) == 0 && strcmp("type", (char *)atts[0]) == 0 ) {
                 ctx->data = 1;
-//                ctx->repofiles[ctx->index].location = strdup((char *)atts[i+1]);
-//                printf("NAME=%s\n", atts[1]);
         }
         if (!ctx->repofiles) return;
 
@@ -287,20 +283,19 @@ static void repomd_character( struct repomd_parserstate *ctx, const xmlChar *ch,
 
 int get_repofiles_from_repomd(char *xml, struct repofile **repofiles, int *repofiles_size)
 {
-        printf("HERE IN GET_REPOFILES_FROM_REPOMD\n\n");
         struct repomd_parserstate my_state;
         int retval = 0;
         my_state.repofiles = NULL;
         *repofiles_size = 0;
-//        xmlChar *primary_ns = (xmlChar *)"http://linux.duke.edu/metadata/common";
+        //        xmlChar *primary_ns = (xmlChar *)"http://linux.duke.edu/metadata/common";
         repomd_handlers.startDocument = (void *)repomd_startdocument;
         repomd_handlers.startElement = (void *)repomd_startelement;
         repomd_handlers.endElement = (void *)repomd_endelement;
         repomd_handlers.characters = (void *)repomd_character;
         retval = xmlSAXUserParseMemory(&repomd_handlers,&my_state,xml,strlen(xml));
         if (retval != 0) exit(1);
-//        fprintf(stderr,"xmlSAXUserParseMemory returned %d\n",retval); 
-//        fprintf(stderr,"my_state.index %d\n",my_state.index); 
+        //        fprintf(stderr,"xmlSAXUserParseMemory returned %d\n",retval); 
+        //        fprintf(stderr,"my_state.index %d\n",my_state.index); 
         my_state.repofiles = calloc( my_state.index + 1, sizeof(struct repofile));
         retval = xmlSAXUserParseMemory(&repomd_handlers,&my_state,xml,strlen(xml));
 
@@ -324,8 +319,6 @@ void compare_repos(struct rpm *src_rpms, int src_size,struct rpm *dst_rpms, int 
          * before actual copy check if file exists locally, might not have run createrepo yet.
          *
          */
-        // printf("src_size=%d\n",src_size);
-        // printf("dst_size=%d\n",dst_size);
         debug(1,"compare_repos");
         debug(0,"sort(src)");
         sort_rpms(src_rpms, src_size);
@@ -335,14 +328,12 @@ void compare_repos(struct rpm *src_rpms, int src_size,struct rpm *dst_rpms, int 
         simple_in_a_not_b(src_rpms, src_size, dst_rpms, dst_size); // copy these
         debug(0,"cleanup_source");
         cleanup_source(src_rpms, src_size, last_n); // last_n, should others be removed from dst? If so, do this after the below bit.
-        if (keep == 0) {
+        if (purge) {
                 simple_in_a_not_b(dst_rpms, dst_size, src_rpms, src_size); // delete these
-                debug(0,"keep=0, simple_in_a_not_b(dst,src)");
+                debug(0,"purge=0, simple_in_a_not_b(dst,src)");
         }
         count_actions(src_rpms, src_size, &stats.to_download, &stats.to_download_bytes);
         count_actions(dst_rpms, dst_size, &stats.to_delete, &stats.to_delete_bytes);
-        printf("%d rpms and %d bytes to download.\n", stats.to_download, stats.to_download_bytes);
-        printf("%d rpms and %d bytes to delete.\n", stats.to_delete, stats.to_delete_bytes);
         debug(-1,"compare_repos done");
 }
 
@@ -354,9 +345,7 @@ void download_rpms(char *baseurl, struct rpm *rpms, int size, char *targetdir)
                         char *fullpath;
                         char *fullsrc;
                         counter++;
-                        // print_rpms(&rpms[i], 1);
-                        // printf("download %s/%s, %ld to %s\n",baseurl,rpms[i].location, rpms[i].size,targetdir);
-                        
+
                         // ensure location does not start with / or has ../.
                         char *clean_location = strdup(rpms[i].location);
                         char *t = clean_location;
@@ -370,19 +359,23 @@ void download_rpms(char *baseurl, struct rpm *rpms, int size, char *targetdir)
                         ensure_dir(targetdir, clean_location);
                         asprintf(&fullpath, "%s/%s", targetdir, clean_location);
                         asprintf(&fullsrc, "%s/%s", baseurl, rpms[i].location);
-                        if ( check_rpm_exists(fullpath, rpms[i]) != 0 ) {
-                                printf("Skipping download %d/%d of %s already exists.\n", counter, stats.to_download, rpms[i].location);
+                        if ( check_rpm_exists(fullpath, rpms[i].size,  rpms[i].checksum_type, rpms[i].checksum) != 0 ) {
+                                if (verbose) printf("Skipping download %d/%d of %s already exists.\n", counter, stats.to_download, rpms[i].location);
                                 stats.download_skipped++;
+                                stats.download_skipped_bytes+=rpms[i].size;
                                 free(fullpath);
                                 continue;
                         }
-                        stats.downloaded++;
                         if (noop) {
-                                // printf("NOOP: curl %s -> %s\n", fullsrc, fullpath);
-                                printf("NOOP: download %d/%d %s\n", counter, stats.to_download, rpms[i].location);
+                                if (verbose) printf("NOOP: download %d/%d %s\n", counter, stats.to_download, rpms[i].location);
                         } else {
-                                printf("Downloading %d/%d %s..\n", counter, stats.to_download, fullsrc);
+                                if (verbose) printf("Downloading %d/%d %s..\n", counter, stats.to_download, fullsrc);
                                 FILE *fp=fopen(fullpath, "wb");
+                                if (fp==NULL) {
+                                        perror("Error downloading: ");
+                                        exit(1);
+                                }
+
                                 get_http_to_file(fp, fullsrc, 1);
                                 fclose(fp);
                         }
@@ -397,14 +390,18 @@ void delete_rpms(char *targetdir, struct rpm *rpms, int size)
         for (i = 0; i < size; i++) {
                 if ( rpms[i].action ) {
                         char *path;
-                        // print_rpms(&rpms[i], 1);
-                        stats.deleted++;
                         asprintf(&path,"%s/%s", targetdir, rpms[i].location);
                         if (noop) {
-                                printf("NOOP: delete %s/%s\n", targetdir, rpms[i].location);
+                                if (verbose) printf("NOOP: delete %s/%s\n", targetdir, rpms[i].location);
                         } else {
-                                printf("delete %s/%s\n", targetdir, rpms[i].location);
-                                unlink(path);
+                                if (verbose) printf("delete %s/%s\n", targetdir, rpms[i].location);
+                                int ret = unlink(path);
+                                if (ret != 0) {
+                                        perror("Error unlinking rpm. Run createrepo?");
+                                } else {
+                                        stats.deleted++;
+                                        stats.deleted_bytes+=rpms[i].size;
+                                }
                         }
                         free(path);
                 }
@@ -417,16 +414,61 @@ int sync_repo(char *src, char *dst)
         struct rpm *rpm_src_ptr, *rpm_dst_ptr;
         int rpm_src_size = 0, rpm_dst_size = 0;
         debug(1,"sync_repo");
+        check_repo_name(src);
+        check_repo_name(dst);
+        bool gotcomps = false;
+        char *src_xml;
+        char *dst_xml;
+        int retval = 0;
+        retval = get_repomd_xml(src, &src_xml);
+        if (retval != 0) return 1;
+        retval = get_repomd_xml(dst, &dst_xml);
+        if (retval != 0) return 1;
+
+        int src_repofiles_size;
+        struct repofile *src_repofiles;
+        get_repofiles_from_repomd(src_xml, &src_repofiles, &src_repofiles_size);
+        if (getcomps) {
+                int i;
+                for (i=0; i< src_repofiles_size; i++) {
+                        if (strcmp(src_repofiles[i].name, "group")==0) {
+                                char *fullpath;
+                                char *fullsrc;
+                                asprintf(&fullpath, "%s/comps.xml", dst);
+                                asprintf(&fullsrc, "%s/%s", src, src_repofiles[i].location);
+
+                                if ( check_rpm_exists(fullpath, src_repofiles[i].size,  src_repofiles[i].checksum_type, src_repofiles[i].checksum) != 0 ) {
+                                        // if (verbose) printf("Skipping downloading identical comps.xml.\n");
+                                        free(fullpath);
+                                        continue;
+                                }
+
+                                if (noop) {
+                                        if (verbose) printf("NOOP: %s -> comps.xml\n", fullsrc);
+                                }  else {
+                                        FILE *fp=fopen(fullpath, "wb");
+                                        if (fp==NULL) {
+                                                perror("Error downloading comps.xml: ");
+                                                exit(1);
+                                        }
+                                        get_http_to_file(fp, fullsrc, 1);
+                                        fclose(fp);
+                                        gotcomps = true;
+                                }
+                                free(fullpath);
+                                free(fullsrc);
+                                break;
+
+                        }
+                }
+        }
         debug(0,"get_rpms(dst)");
-        if (get_rpms(dst, &rpm_dst_ptr, &rpm_dst_size) != 0)
+        if (get_rpms(dst, dst_xml, &rpm_dst_ptr, &rpm_dst_size) != 0)
                 perror("Destination repodata/ not found. Run createrepo?\n");
         debug(0,"print_rpms(dst)");
         stats.dst_size = rpm_dst_size;
-        stats.downloaded = 0;
-//        print_rpms(rpm_dst_ptr, rpm_dst_size);
-//        exit(0);
         debug(0,"get_rpms(src)");
-        if (get_rpms(src, &rpm_src_ptr, &rpm_src_size) != 0) {
+        if (get_rpms(src, src_xml, &rpm_src_ptr, &rpm_src_size) != 0) {
                 perror("source repodata not found\n");
                 exit(1);
         }
@@ -435,32 +477,40 @@ int sync_repo(char *src, char *dst)
                 perror("source does not contain any rpms?\n");
                 exit(1);
         }
-        printf("src: %d rpms in %s\n",rpm_src_size, src);
-        printf("dst: %d rpms in %s\n",rpm_dst_size, dst);
+        if (verbose) {
+                printf("src: %d rpms in %s\n",rpm_src_size, src);
+                printf("dst: %d rpms in %s\n",rpm_dst_size, dst);
+        }
         debug(0,"compare_repos");
         compare_repos(rpm_src_ptr, rpm_src_size, rpm_dst_ptr, rpm_dst_size);
+        stats.downloaded = 0;
+        stats.down_bytes = 0;
+        stats.download_skipped = 0;
+        stats.download_skipped_bytes = 0;
+        stats.deleted = 0;
+        stats.deleted_bytes = 0;
         debug(0,"download_rpms");
         download_rpms(src, rpm_src_ptr, rpm_src_size, dst);
         debug(0,"delete_rpms");
         delete_rpms(dst, rpm_dst_ptr, rpm_dst_size);
+
+        if (updaterepodata) {
+                if ( stats.downloaded + stats.deleted == 0 && gotcomps == false ) { 
+                        printf("no need to run createrepo\n");
+                        return 0;
+                }
+                char *command;
+                if (gotcomps)  {
+                        asprintf(&command, "createrepo --update --pretty --workers 2 --groupfile %s/comps.xml %s\n", dst, dst);
+                } else {
+                        asprintf(&command, "createrepo --update --pretty --workers 2 %s\n", dst);
+                }
+                printf("Running %s", command);
+                system(command);
+                free(command);
+        }
+
         debug(0,"sync_repo done.");
-        // print_rpms(rpm_src_ptr, rpm_src_size);
-        // print_rpms(rpm_dst_ptr, rpm_dst_size);
-//        printf("\n");
-//        printf("src: %d rpms in %s\n",rpm_src_size, src);
-//        printf("dst: %d rpms in %s\n",rpm_dst_size, dst);
-        if (getcomps != 0 && noop==0 ) {
-                printf("COMPS: %s to %s\n", group_file, dst);
-                char *fullpath;
-                char *fullsrc;
-                asprintf(&fullpath, "%s/comps", dst);
-                asprintf(&fullsrc, "%s/%s", src, group_file);
-                FILE *fp=fopen(fullpath, "wb");
-                get_http_to_file(fp, fullsrc, 1);
-                fclose(fp);
-                free(fullpath);
-                free(fullsrc);
-        } 
         debug(-1,"sync_repo done");
         return 0;
 }
@@ -472,18 +522,16 @@ void debug(int indent, char *message)
         static int indentation;
         indentation += indent;
         gettimeofday(&temptime, 0);
-        // diff starttime - temptime = total time
-        // diff now - temptime = diff
         int i;
         fprintf(stderr,"DEBUG:");
         for (i=0; i < indentation; i++)
                 fprintf(stderr,"-");
         fprintf(stderr,"%.1f/%.0fms %s\n",
-                        ( temptime.tv_sec - stats.prevtime.tv_sec) * 1000.0f + (temptime.tv_usec - stats.prevtime.tv_usec ) / 1000.0f,
-                        ( temptime.tv_sec - stats.starttime.tv_sec) * 1000.0f + (temptime.tv_usec - stats.starttime.tv_usec ) / 1000.0f,
-                        message
-               );
-        gettimeofday(&stats.prevtime, 0);
+                                ( temptime.tv_sec - stats.prevtime.tv_sec) * 1000.0f + (temptime.tv_usec - stats.prevtime.tv_usec ) / 1000.0f,
+                                ( temptime.tv_sec - stats.starttime.tv_sec) * 1000.0f + (temptime.tv_usec - stats.starttime.tv_usec ) / 1000.0f,
+                                message
+                 );
+         gettimeofday(&stats.prevtime, 0);
 }
 
 
@@ -502,21 +550,10 @@ int main(int argc, char **argv)
         }
         debug(0,"main start");
         LIBXML_TEST_VERSION
-//        printf("src=%s\n", src_repo_ptr);
-//        printf("dst='%s'\n", dst_repo_ptr);
-        //        printf("keep=%d\n", keep);
-        //        printf("last_n=%d\n", last_n);
-        //        printf("noop=%d\n", noop);
-        //        printf("comps=%d\n", getcomps);
-        //        printf("othermd=%d\n", getothermd);
+        printf("Reposync2 started.\n");
         sync_repo(src_repo_ptr, dst_repo_ptr);
         debug(0,"main done");
-        gettimeofday(&stats.prevtime, 0);
-        printf("Completed in %.2fs\n",
-                ( stats.prevtime.tv_sec - stats.starttime.tv_sec ) +
-                ( stats.prevtime.tv_usec - stats.starttime.tv_usec ) / 1000000.0f
-               );
-
+        /*
         printf("stats.src_size=%d\n", stats.src_size);
         printf("stats.dst_size=%d\n", stats.dst_size);
         printf("stats.to_download=%d\n", stats.to_download);
@@ -527,9 +564,18 @@ int main(int argc, char **argv)
         printf("stats.download_skipped=%d\n", stats.download_skipped);
         printf("stats.deleted=%d\n", stats.deleted);
         printf("stats.down_bytes=%d\n", stats.down_bytes);
-        printf("Done.\n");
+        */
+        gettimeofday(&stats.prevtime, 0);
+        printf("Completed: %d/%.2f MB downloaded %d/%.2f MB skipped %d/%.2f MB deleted rpms in %.2fs.\n",
+                         stats.downloaded, 1.0 * stats.down_bytes / (1024 * 1024),
+                         stats.download_skipped, 1.0 * stats.download_skipped_bytes / (1024 * 1024),
+                         stats.deleted, 1.0 * stats.deleted_bytes / (1024 * 1024),
+                        ( stats.prevtime.tv_sec - stats.starttime.tv_sec ) +
+                        ( stats.prevtime.tv_usec - stats.starttime.tv_usec ) / 1000000.0f
+              );
+
         xmlCleanupParser();
         return 0;
-
 }
+
 

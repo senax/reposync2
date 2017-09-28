@@ -15,9 +15,11 @@ extern char *keyfile, *certfile, *cafile;
 extern bool noop;
 extern bool verifyssl;
 extern int last_n;
-extern bool keep;
+extern bool verbose;
+extern bool purge;
 extern bool getcomps;
 extern bool getothermd;
+extern bool updaterepodata;
 
 extern char *group_file;
 
@@ -54,7 +56,9 @@ struct stats {
         int dst_size;
         int downloaded;
         int download_skipped;
+        int download_skipped_bytes;
         int deleted;
+        int deleted_bytes;
         int to_download;
         int to_download_bytes;
         int to_delete;
@@ -75,13 +79,13 @@ xmlXPathObjectPtr getnodeset(xmlDocPtr doc, xmlChar *namespace, xmlChar *xpath);
 
 int get_xml(char *url, char **xml);
 
-int get_primary_xml(char *repo, char **primary_xml);
+int get_primary_xml(char *repo, char *xml, char **primary_xml);
 
 void print_rpms(struct rpm *rpms, int size);
 
 int ensure_dir(char *basedir, char *location);
 
-int check_rpm_exists(char *targetdir, struct rpm rpm);
+int check_rpm_exists(char *path, size_t size, char *checksum_type, char *checksum);
 
 int xferinfo(void *p, curl_off_t dltotal, curl_off_t dlnow, curl_off_t utotal, curl_off_t ulnow);
 
@@ -98,3 +102,5 @@ void count_actions(struct rpm *rpms, int size, int *count, int *bytes);
 void cleanup_source(struct rpm *rpms, int size,int last_n);
 void simple_in_a_not_b(struct rpm *src_rpms,int src_size,struct rpm *dst_rpms,int dst_size);
 int get_repofiles_from_repomd(char *xml, struct repofile **repofiles, int *repofiles_size);
+
+int get_repomd_xml(char *repo, char **xml);
