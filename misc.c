@@ -40,7 +40,7 @@ size_t write_file(FILE *fp, size_t size, size_t nmemb, FILE *stream)
 int get_http_to_file(FILE *fp, char *url, bool verbose)
 {
         debug(1,"get_http_to_file");
-//        printf("Downloading %s\n",url);
+        printf("Downloading %s\n",url);
         curl_global_init(CURL_GLOBAL_ALL);
         CURL *curl_handle;
         CURLcode res;
@@ -484,7 +484,7 @@ void usage(void)
         printf(" -p, --purge\tpurge files in destination which are not present in source.\n");
         printf(" -l <n>, --last <n>\tOnly download last n versions of the same rpm. Defaults to 0 for all.\n");
         printf(" -s <url>, --source <url>\tSource URL, for example \\\n\t\thttp://mirrorservice.org/sites/dl.fedoraproject.org/pub/epel/7/x86_64\n");
-        printf(" -d <directory>, --destination <directory>\t Destination directory, for example .\n");
+        printf(" -d <directory>, --destination <directory>\t Destination directory, full path, for example $PWD\n");
 
 }
 
